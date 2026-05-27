@@ -1,1 +1,1 @@
-{"description":"Removed redundant dynamicLeaves loop in PlanRunner.done"}
+{"description":"Collapse buildTask leaf->custom-type switch into a lookup table"}

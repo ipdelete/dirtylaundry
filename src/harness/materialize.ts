@@ -104,22 +104,19 @@ export function materializeBatch(
   return { graph, taskById, leafById };
 }
 
+const CUSTOM_TASK_TYPE_BY_LEAF: Record<Exclude<LeafNode['type'], 'report'>, string> = {
+  bash: HarnessTaskType.BASH,
+  'read-log': HarnessTaskType.READ_LOG,
+  journal: HarnessTaskType.JOURNAL,
+  note: HarnessTaskType.NOTE,
+};
+
 function buildTask(bt: BatchTask): Task {
   const leaf = bt.leaf;
   const init = {
     title: leaf.title ?? `${leaf.type}:${bt.id}`,
     ...(leaf.timeout !== undefined ? { timeout: leaf.timeout } : {}),
   };
-  switch (leaf.type) {
-    case 'bash':
-      return Task.custom(HarnessTaskType.BASH, JSON.stringify(leaf.payload), init);
-    case 'read-log':
-      return Task.custom(HarnessTaskType.READ_LOG, JSON.stringify(leaf.payload), init);
-    case 'journal':
-      return Task.custom(HarnessTaskType.JOURNAL, JSON.stringify(leaf.payload), init);
-    case 'note':
-      return Task.custom(HarnessTaskType.NOTE, JSON.stringify(leaf.payload), init);
-    case 'report':
-      return Task.prompt(leaf.payload.prompt, init);
-  }
+  if (leaf.type === 'report') return Task.prompt(leaf.payload.prompt, init);
+  return Task.custom(CUSTOM_TASK_TYPE_BY_LEAF[leaf.type], JSON.stringify(leaf.payload), init);
 }
