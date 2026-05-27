@@ -77,6 +77,18 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
   let nextInput = renderGoalMessage({ goal: options.goal, maxTurns, capabilities });
   let parseRetries = 0;
 
+  const finalize = (status: RunHarnessResult['status'], report?: string): RunHarnessResult => {
+    const persistenceErrors: RunHarnessResult['persistenceErrors'] = [
+      ...executor.persistenceErrors.map((e) => ({ kind: 'task' as const, id: e.taskId, error: e.error.message })),
+      ...executor.graphPersistenceErrors.map((e) => ({ kind: 'graph' as const, id: e.graphId, error: e.error.message })),
+    ];
+    recorder?.finishRun({ runId, status, report });
+    recorder?.close();
+    void executor.close().catch(() => undefined);
+    try { store?.close(); } catch { /* ignore close errors */ }
+    return { status, report, turns, persistenceErrors };
+  };
+
   const onSigint = (): void => {
     log('SIGINT received; aborting planner...');
     planner.abort();
@@ -96,7 +108,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
         turns.push({ turn, kind: 'parse_error', parseError: parsed.error });
         parseRetries++;
         if (parseRetries > maxParseRetries) {
-          return finalize('parse_retries_exhausted', undefined, turns, executor, store, recorder, runId);
+          return finalize('parse_retries_exhausted');
         }
         nextInput = renderErrorFeedback(parsed.error, remaining);
         continue;
@@ -104,7 +116,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
 
       if (parsed.kind === 'done') {
         log('planner signaled done.');
-        return finalize('done', parsed.report, turns, executor, store, recorder, runId);
+        return finalize('done', parsed.report);
       }
 
       parseRetries = 0;
@@ -116,7 +128,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
 
       if (options.interactive && !(await confirmPlan())) {
         log('plan rejected by operator; ending run.');
-        return finalize('aborted', undefined, turns, executor, store, recorder, runId);
+        return finalize('aborted');
       }
 
       // Drain the plan: one PlanRunner per turn, possibly many batches.
@@ -171,41 +183,21 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
       recorder?.finishPlan({ planId, batchCount, status: planStatus });
 
       if (budgetBlown) {
-        return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
+        return finalize('budget_exhausted');
       }
       if (stalled) {
-        return finalize('stalled', undefined, turns, executor, store, recorder, runId);
+        return finalize('stalled');
       }
       if (remaining === 0) {
         log('turn budget reached without an explicit "done"; ending run.');
-        return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
+        return finalize('budget_exhausted');
       }
       nextInput = renderObservationFeedback({ observations: allObservations, remainingTurns: remaining });
     }
-    return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
+    return finalize('budget_exhausted');
   } finally {
     process.off('SIGINT', onSigint);
   }
-}
-
-function finalize(
-  status: RunHarnessResult['status'],
-  report: string | undefined,
-  turns: TurnSummary[],
-  executor: TaskExecutor,
-  store: ReturnType<typeof openRunsStore> | undefined,
-  recorder: RunsRecorder | undefined,
-  runId: string,
-): RunHarnessResult {
-  const persistenceErrors: RunHarnessResult['persistenceErrors'] = [
-    ...executor.persistenceErrors.map((e) => ({ kind: 'task' as const, id: e.taskId, error: e.error.message })),
-    ...executor.graphPersistenceErrors.map((e) => ({ kind: 'graph' as const, id: e.graphId, error: e.error.message })),
-  ];
-  recorder?.finishRun({ runId, status, report });
-  recorder?.close();
-  void executor.close().catch(() => undefined);
-  try { store?.close(); } catch { /* ignore close errors */ }
-  return { status, report, turns, persistenceErrors };
 }
 
 function printPlan(spec: GraphSpec, log: (line: string) => void): void {
