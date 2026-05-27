@@ -39,7 +39,10 @@ const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
     for (const a of args) if (!/^-[A-Za-z]+$/.test(a) && !/^[A-Za-z0-9_:-]+$/.test(a)) return `disallowed ss arg: ${a}`;
     return null;
   },
-  df: defaultFlagAndPathPolicy,
+  df: (args) => {
+    for (const a of args) if (!a.startsWith('/') && !/^-{0,2}[A-Za-z0-9_-]+$/.test(a)) return `disallowed arg: ${a}`;
+    return null;
+  },
   free: simpleFlagPolicy,
   uptime: simpleFlagPolicy,
   who: simpleFlagPolicy,
@@ -57,15 +60,6 @@ const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
 
 function simpleFlagPolicy(args: string[]): string | null {
   for (const a of args) if (!/^-{0,2}[A-Za-z0-9_-]+$/.test(a)) return `disallowed arg: ${a}`;
-  return null;
-}
-
-function defaultFlagAndPathPolicy(args: string[]): string | null {
-  for (const a of args) {
-    if (/^-{0,2}[A-Za-z0-9_-]+$/.test(a)) continue;
-    if (a.startsWith('/')) continue;
-    return `disallowed arg: ${a}`;
-  }
   return null;
 }
 
