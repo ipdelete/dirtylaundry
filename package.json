@@ -11,13 +11,15 @@
     "agent:create:prompt": "tsx src/agent-create-graph.ts prompt",
     "graph:bash": "tsx src/generated/bash-graph.ts",
     "graph:prompt": "tsx src/generated/bash-and-prompt-graph.ts",
+    "harness:smoke": "tsx src/harness-smoke.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.75.5",
     "@earendil-works/pi-ai": "^0.75.5",
-    "@ianphil/ttasks-ts": "github:ianphil/ttasks-ts#v0.3.0"
+    "@ianphil/ttasks-ts": "github:ianphil/ttasks-ts#v0.3.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

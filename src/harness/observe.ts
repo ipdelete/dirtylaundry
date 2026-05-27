@@ -1,0 +1,73 @@
+import type { Task } from '@ianphil/ttasks-ts';
+
+import type { GraphTask } from './schema.js';
+import type { MaterializeResult } from './materialize.js';
+
+/**
+ * Observation: the compact record fed back to the planner on the next turn.
+ *
+ * Design rule: head + tail + count over full output. Token budget is the
+ * dominant constraint over multiple turns. If the planner needs more, it
+ * issues a follow-up `read-log` with `grep`.
+ */
+export interface Observation {
+  id: string;
+  type: GraphTask['type'];
+  title: string;
+  status: string;
+  durationMs: number;
+  payloadEcho: unknown;
+  output: {
+    headLines: string[];
+    tailLines: string[];
+    totalLines: number;
+    truncated: boolean;
+  };
+  error?: string;
+}
+
+export interface CollectOptions {
+  headLines?: number;
+  tailLines?: number;
+}
+
+export function collectObservations(
+  materialized: MaterializeResult,
+  options: CollectOptions = {},
+): Observation[] {
+  const headN = options.headLines ?? 20;
+  const tailN = options.tailLines ?? 20;
+  const out: Observation[] = [];
+  for (const [id, spec] of materialized.specById) {
+    const task = materialized.taskById.get(id);
+    if (!task) continue;
+    out.push(observeTask(task, spec, headN, tailN));
+  }
+  return out;
+}
+
+function observeTask(task: Task, spec: GraphTask, headN: number, tailN: number): Observation {
+  const raw = task.result?.output ?? '';
+  const lines = raw.length === 0 ? [] : raw.replace(/\r\n/g, '\n').split('\n');
+  // Strip a single trailing empty line that typically follows a final newline.
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+  const totalLines = lines.length;
+  const truncated = totalLines > headN + tailN;
+  const headLines = truncated ? lines.slice(0, headN) : lines.slice(0, Math.min(headN, totalLines));
+  const tailLines = truncated ? lines.slice(-tailN) : [];
+
+  const observation: Observation = {
+    id: spec.id,
+    type: spec.type,
+    title: task.title,
+    status: task.status,
+    durationMs: task.result?.duration ?? 0,
+    payloadEcho: spec.payload,
+    output: { headLines, tailLines, totalLines, truncated },
+  };
+  if (task.result?.error || task.error) {
+    observation.error = task.result?.error ?? task.error;
+  }
+  return observation;
+}

@@ -17,6 +17,9 @@ importers:
       '@ianphil/ttasks-ts':
         specifier: github:ianphil/ttasks-ts#v0.3.0
         version: https://codeload.github.com/ianphil/ttasks-ts/tar.gz/fcc4ade5bc43ca3b8345a893db4fb3d8959fb08d
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -319,7 +322,7 @@ packages:
         optional: true
 
   '@ianphil/ttasks-ts@https://codeload.github.com/ianphil/ttasks-ts/tar.gz/fcc4ade5bc43ca3b8345a893db4fb3d8959fb08d':
-    resolution: {tarball: https://codeload.github.com/ianphil/ttasks-ts/tar.gz/fcc4ade5bc43ca3b8345a893db4fb3d8959fb08d}
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/ianphil/ttasks-ts/tar.gz/fcc4ade5bc43ca3b8345a893db4fb3d8959fb08d}
     version: 0.3.0
     engines: {node: '>=24'}
 
