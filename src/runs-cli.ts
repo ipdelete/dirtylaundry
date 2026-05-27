@@ -238,9 +238,5 @@ function pad(s: string, n: number): string {
 
 function safeParse(s: string | null): unknown {
   if (!s) return null;
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(s); } catch { return null; }
 }
