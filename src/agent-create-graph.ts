@@ -5,8 +5,7 @@ import { requireGitHubCopilotApiKey } from './copilot-auth.js';
 import { COPILOT_MODEL, COPILOT_PROVIDER, createGitHubCopilotAgent, extractLastAssistantText, throwIfLastAssistantFailed } from './pi-agent-common.js';
 
 const mode = process.argv[2] === 'prompt' ? 'prompt' : 'bash';
-const outputFile = mode === 'prompt' ? 'bash-and-prompt-graph.ts' : 'bash-graph.ts';
-const outputPath = join(process.cwd(), 'src', 'generated', outputFile);
+const outputPath = join(process.cwd(), 'src', 'generated', mode === 'prompt' ? 'bash-and-prompt-graph.ts' : 'bash-graph.ts');
 
 await requireGitHubCopilotApiKey();
 
