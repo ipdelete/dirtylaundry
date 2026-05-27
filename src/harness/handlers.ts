@@ -20,26 +20,6 @@ export interface HandlerResult {
   returncode: number;
 }
 
-/** Commands the planner may ever invoke via `bash`. The runtime allowlist
- * passed to `makeBashHandler` is the intersection of this set with what is
- * actually present on $PATH (see capabilities.ts). */
-export const DECLARED_BASH_ALLOWLIST: ReadonlySet<string> = new Set([
-  'uptime',
-  'who',
-  'last',
-  'df',
-  'free',
-  'systemctl',
-  'hostnamectl',
-  'uname',
-  'ss',
-  'lsblk',
-  'mount',
-  'ps',
-  'id',
-  'pgrep',
-]);
-
 const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
   systemctl: (args) => {
     const allowed = new Set(['--failed', '--no-pager', 'status', 'list-units', 'list-unit-files', 'is-active', 'is-enabled', 'show']);
