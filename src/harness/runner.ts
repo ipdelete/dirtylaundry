@@ -46,9 +46,6 @@ export class PlanRunner {
 
   done(): boolean {
     for (const s of this.status.values()) if (s !== 'done') return false;
-    for (const leaf of this.dynamicLeaves) {
-      if (this.status.get(leaf.id) !== 'done') return false;
-    }
     return true;
   }
 
