@@ -5,3 +5,5 @@ dist/
 !.env.example
 auth.json
 *.db
+
+.autotester/
