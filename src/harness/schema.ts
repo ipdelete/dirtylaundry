@@ -3,6 +3,14 @@ import { z } from 'zod';
 /**
  * GraphSpec — the contract the planner LLM emits each turn.
  *
+ * The plan is a list of nodes. A node is either:
+ *  - a leaf (journal | read-log | bash | report | note) that runs once, or
+ *  - a control node (if | foreach) that resolves into leaves at runtime
+ *    based on prior observations.
+ *
+ * Control flow lives here, not in ttasks-ts. The runner (PlanRunner) walks
+ * this graph and emits batches of runnable leaves to the ttasks executor.
+ *
  * The harness validates strictly. Anything that does not parse becomes a
  * parse_error observation fed back to the planner on the next turn.
  */
@@ -13,12 +21,20 @@ export const TaskId = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, 'task id must match [A-Za-z0-9_-]+');
 
-const Common = {
+const NodeCommon = {
   id: TaskId,
   title: z.string().min(1).max(120).optional(),
+  /** Ids that must finish before this node is considered. May reference
+   * control-node ids; the runner rewrites those to their expanded leaves. */
   after: z.array(TaskId).max(32).optional(),
+};
+
+const LeafCommon = {
+  ...NodeCommon,
   timeout: z.number().int().positive().max(600).optional(),
 };
+
+// ---- leaf payloads ----
 
 /** journal: journalctl with safe defaults. */
 export const JournalPayload = z.object({
@@ -56,18 +72,80 @@ export const NotePayload = z.object({
   text: z.string().min(1).max(2000),
 });
 
-export const GraphTask = z.discriminatedUnion('type', [
-  z.object({ ...Common, type: z.literal('journal'), payload: JournalPayload }),
-  z.object({ ...Common, type: z.literal('read-log'), payload: ReadLogPayload }),
-  z.object({ ...Common, type: z.literal('bash'), payload: BashPayload }),
-  z.object({ ...Common, type: z.literal('report'), payload: ReportPayload }),
-  z.object({ ...Common, type: z.literal('note'), payload: NotePayload }),
+export const LeafNode = z.discriminatedUnion('type', [
+  z.object({ ...LeafCommon, type: z.literal('journal'), payload: JournalPayload }),
+  z.object({ ...LeafCommon, type: z.literal('read-log'), payload: ReadLogPayload }),
+  z.object({ ...LeafCommon, type: z.literal('bash'), payload: BashPayload }),
+  z.object({ ...LeafCommon, type: z.literal('report'), payload: ReportPayload }),
+  z.object({ ...LeafCommon, type: z.literal('note'), payload: NotePayload }),
+]);
+
+// ---- control flow ----
+
+export const Condition = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('task_status'),
+    task: TaskId,
+    equals: z.enum(['succeeded', 'failed']),
+  }),
+  z.object({
+    kind: z.literal('output_contains'),
+    task: TaskId,
+    substring: z.string().min(1).max(200),
+  }),
+  z.object({
+    kind: z.literal('lines_gt'),
+    task: TaskId,
+    n: z.number().int().nonnegative().max(100000),
+  }),
+]);
+
+export const ItemSource = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('literal'),
+    items: z.array(z.string().min(1).max(500)).min(1).max(64),
+  }),
+  // Reserved for future: { kind: 'task_lines', task: TaskId, grep?: string, limit?: number }
+]);
+
+/** if: pick `then` or `else` branch after `cond.task` resolves.
+ * `cond.task` is implicitly added to `after` by the runner. */
+export const IfNode = z.object({
+  ...NodeCommon,
+  type: z.literal('if'),
+  cond: Condition,
+  then: z.array(LeafNode).min(1).max(16),
+  else: z.array(LeafNode).max(16).optional(),
+});
+
+/** foreach: expand `body` once per item. `${as}` in body string fields is
+ * substituted with the current item before the batch is emitted. */
+export const ForeachNode = z.object({
+  ...NodeCommon,
+  type: z.literal('foreach'),
+  over: ItemSource,
+  as: z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'as must be a simple identifier'),
+  body: LeafNode,
+});
+
+export const Node = z.discriminatedUnion('type', [
+  z.object({ ...LeafCommon, type: z.literal('journal'), payload: JournalPayload }),
+  z.object({ ...LeafCommon, type: z.literal('read-log'), payload: ReadLogPayload }),
+  z.object({ ...LeafCommon, type: z.literal('bash'), payload: BashPayload }),
+  z.object({ ...LeafCommon, type: z.literal('report'), payload: ReportPayload }),
+  z.object({ ...LeafCommon, type: z.literal('note'), payload: NotePayload }),
+  IfNode,
+  ForeachNode,
 ]);
 
 export const GraphSpec = z.object({
   kind: z.literal('graph'),
   rationale: z.string().min(1).max(2000),
-  tasks: z.array(GraphTask).min(1).max(32),
+  nodes: z.array(Node).min(1).max(32),
 });
 
 export const DoneSpec = z.object({
@@ -78,53 +156,67 @@ export const DoneSpec = z.object({
 export const PlannerOutput = z.discriminatedUnion('kind', [GraphSpec, DoneSpec]);
 
 export type TaskId = z.infer<typeof TaskId>;
-export type GraphTask = z.infer<typeof GraphTask>;
+export type LeafNode = z.infer<typeof LeafNode>;
+export type IfNode = z.infer<typeof IfNode>;
+export type ForeachNode = z.infer<typeof ForeachNode>;
+export type Node = z.infer<typeof Node>;
 export type GraphSpec = z.infer<typeof GraphSpec>;
 export type DoneSpec = z.infer<typeof DoneSpec>;
 export type PlannerOutput = z.infer<typeof PlannerOutput>;
+export type Condition = z.infer<typeof Condition>;
+export type ItemSource = z.infer<typeof ItemSource>;
 export type BashPayloadT = z.infer<typeof BashPayload>;
 export type ReadLogPayloadT = z.infer<typeof ReadLogPayload>;
 export type JournalPayloadT = z.infer<typeof JournalPayload>;
 export type ReportPayloadT = z.infer<typeof ReportPayload>;
 export type NotePayloadT = z.infer<typeof NotePayload>;
 
-/** Structural validation beyond schema: unique ids, edges resolve, no cycles. */
+/** Structural validation: unique ids (including nested), edges resolve,
+ * conditions reference declared top-level nodes. */
 export function validateGraphSpec(spec: GraphSpec): { ok: true } | { ok: false; error: string } {
   const ids = new Set<string>();
-  for (const task of spec.tasks) {
-    if (ids.has(task.id)) return { ok: false, error: `duplicate task id: ${task.id}` };
-    ids.add(task.id);
+  const collect = (node: Node): string | null => {
+    if (ids.has(node.id)) return `duplicate node id: ${node.id}`;
+    ids.add(node.id);
+    if (node.type === 'if') {
+      for (const child of node.then) {
+        const e = collect(child);
+        if (e) return e;
+      }
+      for (const child of node.else ?? []) {
+        const e = collect(child);
+        if (e) return e;
+      }
+    } else if (node.type === 'foreach') {
+      const e = collect(node.body);
+      if (e) return e;
+    }
+    return null;
+  };
+  for (const node of spec.nodes) {
+    const e = collect(node);
+    if (e) return { ok: false, error: e };
   }
-  for (const task of spec.tasks) {
-    for (const dep of task.after ?? []) {
-      if (!ids.has(dep)) return { ok: false, error: `task ${task.id} depends on unknown id: ${dep}` };
-      if (dep === task.id) return { ok: false, error: `task ${task.id} depends on itself` };
+
+  const topIds = new Set(spec.nodes.map((n) => n.id));
+  for (const node of spec.nodes) {
+    for (const dep of node.after ?? []) {
+      if (!topIds.has(dep)) {
+        return { ok: false, error: `node ${node.id} depends on unknown top-level id: ${dep}` };
+      }
+      if (dep === node.id) return { ok: false, error: `node ${node.id} depends on itself` };
+    }
+    if (node.type === 'if' && !topIds.has(node.cond.task)) {
+      return {
+        ok: false,
+        error: `if node ${node.id} condition references unknown top-level id: ${node.cond.task}`,
+      };
     }
   }
-  // Topological-sort check for cycles.
-  const indeg = new Map<string, number>();
-  const adj = new Map<string, string[]>();
-  for (const task of spec.tasks) {
-    indeg.set(task.id, 0);
-    adj.set(task.id, []);
-  }
-  for (const task of spec.tasks) {
-    for (const dep of task.after ?? []) {
-      adj.get(dep)!.push(task.id);
-      indeg.set(task.id, (indeg.get(task.id) ?? 0) + 1);
-    }
-  }
-  const queue: string[] = [];
-  for (const [id, n] of indeg) if (n === 0) queue.push(id);
-  let visited = 0;
-  while (queue.length) {
-    const id = queue.shift()!;
-    visited++;
-    for (const next of adj.get(id) ?? []) {
-      indeg.set(next, (indeg.get(next) ?? 0) - 1);
-      if (indeg.get(next) === 0) queue.push(next);
-    }
-  }
-  if (visited !== spec.tasks.length) return { ok: false, error: 'cycle detected in task graph' };
+
   return { ok: true };
+}
+
+export function isLeaf(node: Node): node is LeafNode {
+  return node.type !== 'if' && node.type !== 'foreach';
 }

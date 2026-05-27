@@ -8,8 +8,10 @@ import {
 } from '@ianphil/ttasks-ts';
 
 import { PiAgentCopilotProvider } from '../pi-agent-copilot-provider.js';
-import { bashHandler, journalHandler, noteHandler, readLogHandler } from './handlers.js';
-import type { GraphSpec, GraphTask } from './schema.js';
+import { journalHandler, makeBashHandler, noteHandler, readLogHandler } from './handlers.js';
+import type { HostCapabilities } from './capabilities.js';
+import type { LeafNode } from './schema.js';
+import type { Batch, BatchTask } from './runner.js';
 
 /** Custom TaskType strings registered by the harness. */
 export const HarnessTaskType = {
@@ -24,11 +26,17 @@ export interface BuildExecutorOptions {
   reportModel?: string;
   reportTimeoutSeconds?: number;
   store?: Store;
+  /** The bash handler is restricted to this host's effective allowlist
+   * (intersection of declared commands and what's present on $PATH). */
+  capabilities: HostCapabilities;
 }
 
-export function buildHarnessExecutor(options: BuildExecutorOptions = {}): TaskExecutor {
+export function buildHarnessExecutor(options: BuildExecutorOptions): TaskExecutor {
   const executor = new TaskExecutor(options.store ? { store: options.store } : undefined);
-  executor.register(HarnessTaskType.BASH, bashHandler);
+  executor.register(
+    HarnessTaskType.BASH,
+    makeBashHandler({ allowlist: options.capabilities.effectiveBashAllowlist }),
+  );
   executor.register(HarnessTaskType.READ_LOG, readLogHandler);
   executor.register(HarnessTaskType.JOURNAL, journalHandler);
   executor.register(HarnessTaskType.NOTE, noteHandler);
@@ -52,70 +60,66 @@ export function buildHarnessExecutor(options: BuildExecutorOptions = {}): TaskEx
 
 export interface MaterializeResult {
   graph: TaskGraph;
-  /** Maps GraphSpec task id -> ttasks Task instance. */
+  /** Batch task id -> ttasks Task instance. */
   taskById: Map<string, Task>;
-  /** Maps GraphSpec task id -> the original spec entry. Used by the observer. */
-  specById: Map<string, GraphTask>;
+  /** Batch task id -> originating leaf (post-substitution if expanded). */
+  leafById: Map<string, LeafNode>;
 }
 
 export interface MaterializeOptions {
-  /** Stamped onto each task's metadata so a future `runs show` can reconstruct context. */
   turn?: number;
   rationale?: string;
   specId?: string;
 }
 
-export function materializeGraph(
-  spec: GraphSpec,
-  title = 'planner-graph',
+export function materializeBatch(
+  batch: Batch,
+  title = 'planner-batch',
   options: MaterializeOptions = {},
 ): MaterializeResult {
   const graph = new TaskGraph({ title });
   const taskById = new Map<string, Task>();
-  const specById = new Map<string, GraphTask>();
-  for (const entry of spec.tasks) specById.set(entry.id, entry);
+  const leafById = new Map<string, LeafNode>();
+  for (const bt of batch.tasks) leafById.set(bt.id, bt.leaf);
 
-  for (const entry of spec.tasks) {
-    const task = buildTask(entry);
-    // Metadata is the right place to stash planner-side context. ttasks treats
-    // it as opaque; queries against runs.db later can reconstruct *why*.
+  for (const bt of batch.tasks) {
+    const task = buildTask(bt);
     task.metadata = {
-      specTaskId: entry.id,
-      specType: entry.type,
+      specTaskId: bt.id,
+      specType: bt.leaf.type,
       ...(options.specId ? { specId: options.specId } : {}),
       ...(options.turn !== undefined ? { turn: options.turn } : {}),
       ...(options.rationale ? { rationale: options.rationale } : {}),
     };
-    taskById.set(entry.id, task);
+    taskById.set(bt.id, task);
 
-    const after = (entry.after ?? []).map((depId) => {
+    const after = (bt.after ?? []).map((depId) => {
       const dep = taskById.get(depId);
-      if (!dep) throw new Error(`materializeGraph: forward dependency ${entry.id} -> ${depId}`);
+      if (!dep) throw new Error(`materializeBatch: unresolved dependency ${bt.id} -> ${depId}`);
       return dep;
     });
     graph.add(task, after.length ? { after } : undefined);
   }
 
-  return { graph, taskById, specById };
+  return { graph, taskById, leafById };
 }
 
-function buildTask(entry: GraphTask): Task {
+function buildTask(bt: BatchTask): Task {
+  const leaf = bt.leaf;
   const init = {
-    title: entry.title ?? `${entry.type}:${entry.id}`,
-    ...(entry.timeout !== undefined ? { timeout: entry.timeout } : {}),
+    title: leaf.title ?? `${leaf.type}:${bt.id}`,
+    ...(leaf.timeout !== undefined ? { timeout: leaf.timeout } : {}),
   };
-  switch (entry.type) {
+  switch (leaf.type) {
     case 'bash':
-      return Task.custom(HarnessTaskType.BASH, JSON.stringify(entry.payload), init);
+      return Task.custom(HarnessTaskType.BASH, JSON.stringify(leaf.payload), init);
     case 'read-log':
-      return Task.custom(HarnessTaskType.READ_LOG, JSON.stringify(entry.payload), init);
+      return Task.custom(HarnessTaskType.READ_LOG, JSON.stringify(leaf.payload), init);
     case 'journal':
-      return Task.custom(HarnessTaskType.JOURNAL, JSON.stringify(entry.payload), init);
+      return Task.custom(HarnessTaskType.JOURNAL, JSON.stringify(leaf.payload), init);
     case 'note':
-      return Task.custom(HarnessTaskType.NOTE, JSON.stringify(entry.payload), init);
+      return Task.custom(HarnessTaskType.NOTE, JSON.stringify(leaf.payload), init);
     case 'report':
-      // ttasks Task.prompt + makeCopilotPromptHandler — the prompt text is
-      // the payload, no JSON wrapping.
-      return Task.prompt(entry.payload.prompt, init);
+      return Task.prompt(leaf.payload.prompt, init);
   }
 }

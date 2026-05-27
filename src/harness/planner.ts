@@ -5,13 +5,15 @@ import {
   extractLastAssistantText,
   throwIfLastAssistantFailed,
 } from '../pi-agent-common.js';
+import { renderCapabilitiesForPlanner, type HostCapabilities } from './capabilities.js';
 import type { Observation } from './observe.js';
 import { PlannerOutput, validateGraphSpec, type GraphSpec } from './schema.js';
 
 /**
  * The planner is a pi-agent-core Agent with no tools. Each turn it emits one
- * JSON value (a `GraphSpec` or a `done` signal). The harness validates and
- * either runs the graph or terminates.
+ * JSON value (a `GraphSpec` or a `done` signal). The harness validates,
+ * runs the plan to completion (resolving control flow across batches),
+ * then feeds all observations back next turn.
  */
 
 export const PLANNER_SYSTEM_PROMPT = [
@@ -23,7 +25,7 @@ export const PLANNER_SYSTEM_PROMPT = [
   '   {',
   '     "kind": "graph",',
   '     "rationale": string,',
-  '     "tasks": [ GraphTask, ... ]   // 1..32 tasks',
+  '     "nodes": [ Node, ... ]   // 1..32 top-level nodes',
   '   }',
   '',
   'B) Done signal:',
@@ -32,58 +34,67 @@ export const PLANNER_SYSTEM_PROMPT = [
   '     "report": string   // your final "things you should know" summary',
   '   }',
   '',
-  'GraphTask shape:',
-  '   {',
-  '     "id": string,                  // unique within this graph; [A-Za-z0-9_-]+',
-  '     "type": one of ["journal","read-log","bash","report","note"],',
-  '     "title": string?,',
-  '     "payload": object,             // type-specific, see below',
-  '     "after": [string]?,            // ids that must finish before this runs',
-  '     "timeout": number?             // seconds, <=600',
-  '   }',
+  'A Node is either a LEAF (runs once) or a CONTROL node (if/foreach).',
   '',
-  'Payload schemas:',
-  '  journal:  { since: string, priority?: "emerg"|"alert"|"crit"|"err"|"warning"|"notice"|"info"|"debug", unit?: string, grep?: string, maxLines?: <=2000 (default 500) }',
-  '  read-log: { path: string (MUST start with /var/log/), tailLines?: <=2000 (default 500), grep?: string }',
-  '  bash:     { command: string, args?: string[] }',
-  '            Allowed commands ONLY: uptime, who, last, df, free, systemctl, hostnamectl, uname, ss, lsblk, mount, ps, id, pgrep.',
-  '            No shell, no pipes, no redirection. Args go in the array.',
-  '  report:   { prompt: string }                  // calls a sub-LLM to produce a summary',
-  '  note:     { text: string }                    // pure breadcrumb, no I/O',
+  'Common fields on every node:',
+  '   id:    unique within this graph; [A-Za-z0-9_-]+',
+  '   title: optional human label',
+  '   after: optional array of node ids that must finish first',
+  '',
+  'LEAF nodes have:  type, payload, optional timeout (seconds, <=600).',
+  '  - journal:  payload { since, priority?, unit?, grep?, maxLines? (<=2000, default 500) }',
+  '  - read-log: payload { path (MUST start with /var/log/), tailLines? (<=2000, default 500), grep? }',
+  '  - bash:     payload { command, args? }',
+  '              Allowed commands ONLY: uptime, who, last, df, free, systemctl, hostnamectl, uname, ss, lsblk, mount, ps, id, pgrep.',
+  '              The Host context section below lists which of these actually exist on this host.',
+  '              No shell, no pipes, no redirection. Args go in the array.',
+  '  - report:   payload { prompt }   // calls a sub-LLM to produce a summary',
+  '  - note:     payload { text }     // pure breadcrumb, no I/O',
+  '',
+  'CONTROL nodes:',
+  '  if   { id, type: "if", cond, then: [LEAF,...], else?: [LEAF,...], after?, title? }',
+  '         cond is one of:',
+  '           { kind: "task_status",     task: id, equals: "succeeded"|"failed" }',
+  '           { kind: "output_contains", task: id, substring: string }',
+  '           { kind: "lines_gt",        task: id, n: integer }',
+  '         The referenced cond.task is implicitly an `after` dep; the matching',
+  '         branch runs in a later batch once cond is resolvable.',
+  '  foreach { id, type: "foreach", over: { kind: "literal", items: [string,...] },',
+  '            as: identifier, body: LEAF }',
+  '            `${as}` in any string field of `body` is substituted per item.',
+  '            All expanded leaves run in parallel.',
+  '',
+  'Execution model: you emit ONE plan per turn. The harness drives it to',
+  'completion across as many internal batches as needed, then returns the',
+  'observations of every leaf (top-level and expanded). Use `if`/`foreach`',
+  'aggressively instead of waiting a turn just to branch or fan out.',
   '',
   'Rules:',
   ' - Output exactly one JSON value. Nothing else.',
-  ' - Prefer parallelism. Only set "after" for true data dependencies.',
-  ' - Keep graphs small (3-8 tasks usually). Multiple turns are fine.',
+  ' - Prefer parallelism. Only set `after` for true data dependencies.',
   ' - On the last turn, return { "kind": "done", "report": ... }.',
-  ' - For final synthesis, include a `report` task in an earlier turn so the report has fresh context, then summarize its output in your "done" report.',
   ' - Do not invent task types, commands, or fields. Stay strictly within the schema.',
-  ' - PALETTE GAP RULE: If the goal cannot be honestly answered with the available task types, do not contort or guess. Return { "kind": "done", "report": ... } immediately, stating plainly which task type(s) or capabilities would be needed. A short, honest "cannot answer with this palette" report is better than a confident-looking report built on data you could not actually gather.',
+  ' - PALETTE GAP RULE: If the goal cannot be honestly answered with the available',
+  '   task types AND the host context below, do not contort or guess. Return',
+  '   { "kind": "done", "report": ... } immediately, stating plainly which task',
+  '   type(s) or host capabilities would be needed. A short, honest "cannot answer',
+  '   with this palette" report is better than a confident-looking report built on',
+  '   data you could not actually gather.',
 ].join('\n');
-
-export interface PlannerTurnRecord {
-  turn: number;
-  spec?: GraphSpec;
-  observations?: Observation[];
-  parseError?: string;
-  policyError?: string;
-}
-
-/**
- * The planner Agent keeps conversation history natively across `.prompt()`
- * calls, so we send only what's new each turn: the goal on turn 0, then
- * observations or error feedback on subsequent turns.
- */
 
 export interface RenderGoalOptions {
   goal: string;
   maxTurns: number;
+  capabilities: HostCapabilities;
 }
 
 export function renderGoalMessage(options: RenderGoalOptions): string {
   return [
     `Goal: ${options.goal}`,
     `Budget: up to ${options.maxTurns} turns. Use "done" to end early.`,
+    '',
+    'Host context:',
+    renderCapabilitiesForPlanner(options.capabilities),
     '',
     'Produce the first JSON value now.',
   ].join('\n');
@@ -97,7 +108,7 @@ export interface RenderFeedbackOptions {
 export function renderObservationFeedback(options: RenderFeedbackOptions): string {
   return [
     `Remaining turns: ${options.remainingTurns}`,
-    'Observations from the previous graph run (JSON):',
+    'Observations from every leaf executed in the previous plan (JSON):',
     JSON.stringify(options.observations, null, 2),
     '',
     'Produce the next JSON value now.',
@@ -112,11 +123,8 @@ export function renderErrorFeedback(error: string, remainingTurns: number): stri
   ].join('\n');
 }
 
-/**
- * Tolerant JSON extraction. Models occasionally wrap output in ```json fences
- * despite instructions. Strip what we can; let Zod fail loudly on anything
- * still malformed.
- */
+/** Tolerant JSON extraction. Models occasionally wrap output in ```json fences
+ * despite instructions. */
 export function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenced?.[1]) return fenced[1].trim();

@@ -1,6 +1,6 @@
 import type { Task } from '@ianphil/ttasks-ts';
 
-import type { GraphTask } from './schema.js';
+import type { LeafNode } from './schema.js';
 import type { MaterializeResult } from './materialize.js';
 
 /**
@@ -12,7 +12,7 @@ import type { MaterializeResult } from './materialize.js';
  */
 export interface Observation {
   id: string;
-  type: GraphTask['type'];
+  type: LeafNode['type'];
   title: string;
   status: string;
   durationMs: number;
@@ -38,18 +38,17 @@ export function collectObservations(
   const headN = options.headLines ?? 20;
   const tailN = options.tailLines ?? 20;
   const out: Observation[] = [];
-  for (const [id, spec] of materialized.specById) {
+  for (const [id, leaf] of materialized.leafById) {
     const task = materialized.taskById.get(id);
     if (!task) continue;
-    out.push(observeTask(task, spec, headN, tailN));
+    out.push(observeTask(task, id, leaf, headN, tailN));
   }
   return out;
 }
 
-function observeTask(task: Task, spec: GraphTask, headN: number, tailN: number): Observation {
+function observeTask(task: Task, id: string, leaf: LeafNode, headN: number, tailN: number): Observation {
   const raw = task.result?.output ?? '';
   const lines = raw.length === 0 ? [] : raw.replace(/\r\n/g, '\n').split('\n');
-  // Strip a single trailing empty line that typically follows a final newline.
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
 
   const totalLines = lines.length;
@@ -58,12 +57,12 @@ function observeTask(task: Task, spec: GraphTask, headN: number, tailN: number):
   const tailLines = truncated ? lines.slice(-tailN) : [];
 
   const observation: Observation = {
-    id: spec.id,
-    type: spec.type,
+    id,
+    type: leaf.type,
     title: task.title,
     status: task.status,
     durationMs: task.result?.duration ?? 0,
-    payloadEcho: spec.payload,
+    payloadEcho: leaf.payload,
     output: { headLines, tailLines, totalLines, truncated },
   };
   if (task.result?.error || task.error) {

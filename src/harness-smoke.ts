@@ -1,37 +1,81 @@
+import { randomUUID } from 'node:crypto';
+
+import { detectCapabilities } from './harness/capabilities.js';
+import { buildHarnessExecutor, materializeBatch } from './harness/materialize.js';
+import { collectObservations, type Observation } from './harness/observe.js';
+import { PlanRunner } from './harness/runner.js';
 import { GraphSpec, PlannerOutput, validateGraphSpec } from './harness/schema.js';
-import { buildHarnessExecutor, materializeGraph } from './harness/materialize.js';
-import { collectObservations } from './harness/observe.js';
 import { openRunsStore } from './harness/store.js';
 
 /**
- * Smoke test for harness steps 1-4:
- *   1. schema parse + structural validate
- *   2. materialize -> ttasks TaskGraph
- *   3. execute via registered handlers
- *   4. collect compact observations
+ * Smoke test for the harness end-to-end (no LLM).
  *
- * No planner LLM yet. The GraphSpec is hand-written below to look like
- * something the planner would emit on turn 1 of a log review run.
+ * Hand-writes a GraphSpec that exercises:
+ *   - leaf nodes (bash, journal, note, report)
+ *   - foreach with literal items (parallel fanout)
+ *   - if with a task_status condition (resolved between batches)
+ *
+ * The PlanRunner drains the plan into batches; each batch is materialized
+ * and executed by ttasks.
  */
 
-const handCraftedSpec = {
+const handCrafted = {
   kind: 'graph',
-  rationale: 'Sweep current state: uptime, failed units, hostname, recent journal warnings.',
-  tasks: [
-    { id: 'up', type: 'bash', title: 'uptime', payload: { command: 'uptime' } },
+  rationale:
+    'Sweep state, probe per-service status, branch on whether any units failed, then synthesize.',
+  nodes: [
     { id: 'host', type: 'bash', title: 'hostnamectl', payload: { command: 'hostnamectl' } },
-    { id: 'failed', type: 'bash', title: 'systemctl --failed', payload: { command: 'systemctl', args: ['--failed', '--no-pager'] } },
-    { id: 'note1', type: 'note', title: 'plan', payload: { text: 'Phase 1: sweep system state.' }, after: [] },
     {
-      id: 'journal-warn',
-      type: 'journal',
-      title: 'journal warnings 24h',
-      payload: { since: '24 hours ago', priority: 'warning', maxLines: 200 },
+      id: 'failed',
+      type: 'bash',
+      title: 'systemctl --failed',
+      payload: { command: 'systemctl', args: ['--failed', '--no-pager'] },
+    },
+    {
+      id: 'svc',
+      type: 'foreach',
+      as: 'unit',
+      over: { kind: 'literal', items: ['ssh', 'cron'] },
+      body: {
+        id: 'status',
+        type: 'bash',
+        title: 'systemctl is-active ${unit}',
+        payload: { command: 'systemctl', args: ['is-active', '${unit}'] },
+      },
+    },
+    {
+      id: 'maybe-journal',
+      type: 'if',
+      cond: { kind: 'task_status', task: 'failed', equals: 'succeeded' },
+      then: [
+        {
+          id: 'journal-warn',
+          type: 'journal',
+          title: 'recent warnings',
+          payload: { since: '1 hour ago', priority: 'warning', maxLines: 100 },
+        },
+      ],
+      else: [
+        {
+          id: 'no-failed-note',
+          type: 'note',
+          payload: { text: 'failed-units probe itself failed; skipped journal sweep.' },
+        },
+      ],
+    },
+    {
+      id: 'summary',
+      type: 'report',
+      after: ['host', 'svc', 'maybe-journal'],
+      payload: {
+        prompt:
+          'Write 3 concise bullets covering: host identity, per-service status, and whether any units failed. No filler.',
+      },
     },
   ],
 } as const;
 
-const parsed = PlannerOutput.safeParse(handCraftedSpec);
+const parsed = PlannerOutput.safeParse(handCrafted);
 if (!parsed.success) {
   console.error('schema parse failed:');
   console.error(parsed.error.issues);
@@ -47,17 +91,44 @@ if (!structural.ok) {
   console.error(`structural validation failed: ${structural.error}`);
   process.exit(1);
 }
-console.log(`plan: ${spec.tasks.length} tasks, rationale="${spec.rationale}"`);
+console.log(`plan: ${spec.nodes.length} top-level nodes, rationale="${spec.rationale}"`);
+
+const runId = randomUUID();
+const capabilities = detectCapabilities();
+console.log(`host: ${capabilities.platform}, bash[${capabilities.effectiveBashAllowlist.size}/14] avail, journalctl=${capabilities.hasJournalctl}`);
 
 const store = openRunsStore();
-const executor = buildHarnessExecutor({ store });
-const materialized = materializeGraph(spec, 'smoke-graph', { turn: 0, rationale: spec.rationale, specId: 'smoke' });
+const executor = buildHarnessExecutor({ store, capabilities });
+const runner = new PlanRunner(spec);
 
-await materialized.graph.run(executor);
+const allObservations: Observation[] = [];
+while (!runner.done()) {
+  const batch = runner.nextBatch();
+  if (!batch) {
+    console.error(`runner stalled with pending: ${runner.pending().join(', ')}`);
+    break;
+  }
+  console.log(`\n--- batch ${batch.index} (${batch.tasks.length} tasks) ---`);
+  for (const bt of batch.tasks) {
+    const after = (bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : '';
+    console.log(`  - ${bt.id} (${bt.leaf.type})${after}`);
+  }
+  const materialized = materializeBatch(batch, `${runId}/batch-${batch.index}`, {
+    turn: batch.index,
+    rationale: batch.rationale,
+    specId: `${runId}:b${batch.index}`,
+  });
+  await materialized.graph.run(executor);
+  const observations = collectObservations(materialized, { headLines: 4, tailLines: 4 });
+  for (const o of observations) {
+    const flag = o.status === 'succeeded' ? 'ok' : o.status;
+    console.log(`    [${flag}] ${o.id} (${o.durationMs}ms, ${o.output.totalLines} lines)`);
+  }
+  runner.recordObservations(observations);
+  allObservations.push(...observations);
+}
 
-const observations = collectObservations(materialized, { headLines: 8, tailLines: 8 });
-console.log('\n=== observations ===');
-console.log(JSON.stringify(observations, null, 2));
+console.log(`\nrun complete: ${allObservations.length} leaves executed.`);
 
 await executor.close();
 store.close();

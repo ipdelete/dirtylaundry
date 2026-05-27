@@ -20,8 +20,10 @@ export interface HandlerResult {
   returncode: number;
 }
 
-/** Commands the planner is allowed to invoke via `bash`. No shell, no pipes. */
-const BASH_ALLOWLIST: ReadonlySet<string> = new Set([
+/** Commands the planner may ever invoke via `bash`. The runtime allowlist
+ * passed to `makeBashHandler` is the intersection of this set with what is
+ * actually present on $PATH (see capabilities.ts). */
+export const DECLARED_BASH_ALLOWLIST: ReadonlySet<string> = new Set([
   'uptime',
   'who',
   'last',
@@ -38,7 +40,6 @@ const BASH_ALLOWLIST: ReadonlySet<string> = new Set([
   'pgrep',
 ]);
 
-/** Argument shape restriction per command. Keep it tight on day one. */
 const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
   systemctl: (args) => {
     const allowed = new Set(['--failed', '--no-pager', 'status', 'list-units', 'list-unit-files', 'is-active', 'is-enabled', 'show']);
@@ -138,17 +139,25 @@ function parsePayload<T>(context: TaskContext): T {
   return JSON.parse(context.payload) as T;
 }
 
-export async function bashHandler(context: TaskContext): Promise<HandlerResult> {
-  const payload = parsePayload<BashPayloadT>(context);
-  if (!BASH_ALLOWLIST.has(payload.command)) {
-    throw new Error(`bash command not in allowlist: ${payload.command}`);
-  }
-  const argPolicy = BASH_ARG_POLICIES[payload.command];
-  if (argPolicy) {
-    const err = argPolicy(payload.args);
-    if (err) throw new Error(`bash arg policy violation: ${err}`);
-  }
-  return runProcess(payload.command, payload.args, context.signal);
+export interface BashHandlerOptions {
+  /** Effective allowlist for this host. Subset of DECLARED_BASH_ALLOWLIST. */
+  allowlist: ReadonlySet<string>;
+}
+
+export function makeBashHandler(options: BashHandlerOptions) {
+  const { allowlist } = options;
+  return async function bashHandler(context: TaskContext): Promise<HandlerResult> {
+    const payload = parsePayload<BashPayloadT>(context);
+    if (!allowlist.has(payload.command)) {
+      throw new Error(`bash command not in effective allowlist for this host: ${payload.command}`);
+    }
+    const argPolicy = BASH_ARG_POLICIES[payload.command];
+    if (argPolicy) {
+      const err = argPolicy(payload.args);
+      if (err) throw new Error(`bash arg policy violation: ${err}`);
+    }
+    return runProcess(payload.command, payload.args, context.signal);
+  };
 }
 
 export async function readLogHandler(context: TaskContext): Promise<HandlerResult> {
@@ -162,7 +171,6 @@ export async function readLogHandler(context: TaskContext): Promise<HandlerResul
   const tailed = await runProcess('tail', args, context.signal);
   if (!payload.grep) return tailed;
 
-  // grep the tail output via a second process, no shell.
   return await new Promise((resolvePromise, reject) => {
     const child = spawn('grep', ['-E', '--', payload.grep!], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -181,7 +189,6 @@ export async function readLogHandler(context: TaskContext): Promise<HandlerResul
     child.on('error', reject);
     child.on('close', (code) => {
       context.signal.removeEventListener('abort', onAbort);
-      // grep exit 1 = no matches; treat as success with empty stdout.
       const returncode = code === 1 ? 0 : (code ?? 0);
       resolvePromise({ stdout, stderr, returncode });
     });

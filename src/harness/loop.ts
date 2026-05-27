@@ -3,7 +3,8 @@ import { createInterface } from 'node:readline/promises';
 
 import type { TaskExecutor } from '@ianphil/ttasks-ts';
 
-import { buildHarnessExecutor, materializeGraph } from './materialize.js';
+import { buildHarnessExecutor, materializeBatch } from './materialize.js';
+import { detectCapabilities } from './capabilities.js';
 import { collectObservations, type Observation } from './observe.js';
 import {
   createPlanner,
@@ -13,7 +14,8 @@ import {
   renderObservationFeedback,
   type Planner,
 } from './planner.js';
-import type { GraphSpec } from './schema.js';
+import { PlanRunner } from './runner.js';
+import type { GraphSpec, Node } from './schema.js';
 import { openRunsStore } from './store.js';
 
 export interface RunHarnessOptions {
@@ -29,7 +31,7 @@ export interface RunHarnessOptions {
 }
 
 export interface RunHarnessResult {
-  status: 'done' | 'budget_exhausted' | 'parse_retries_exhausted' | 'aborted';
+  status: 'done' | 'budget_exhausted' | 'parse_retries_exhausted' | 'aborted' | 'stalled';
   report?: string;
   turns: TurnSummary[];
   persistenceErrors: Array<{ kind: 'task' | 'graph'; id: string; error: string }>;
@@ -39,7 +41,8 @@ export interface TurnSummary {
   turn: number;
   kind: 'graph' | 'parse_error';
   rationale?: string;
-  taskCount?: number;
+  nodeCount?: number;
+  batchCount?: number;
   parseError?: string;
   observations?: Observation[];
 }
@@ -58,14 +61,16 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
   const useStore = (options.store ?? 'sqlite') === 'sqlite';
 
   const store = useStore ? openRunsStore(options.storePath) : undefined;
-  const executor: TaskExecutor = buildHarnessExecutor({ store });
+  const capabilities = detectCapabilities();
+  const executor: TaskExecutor = buildHarnessExecutor({ store, capabilities });
   const planner: Planner = createPlanner({ reasoningEffort: options.reasoningEffort });
   const runId = randomUUID();
   log(`run ${runId} (store: ${useStore ? options.storePath ?? 'default' : 'none'})`);
+  log(`host: ${capabilities.platform}, bash[${capabilities.effectiveBashAllowlist.size}/14] avail, journalctl=${capabilities.hasJournalctl}`);
 
   const turns: TurnSummary[] = [];
   let totalTasks = 0;
-  let nextInput = renderGoalMessage({ goal: options.goal, maxTurns });
+  let nextInput = renderGoalMessage({ goal: options.goal, maxTurns, capabilities });
   let parseRetries = 0;
 
   const onSigint = (): void => {
@@ -100,42 +105,74 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
 
       parseRetries = 0;
       const spec = parsed.spec;
-      log(`plan: ${spec.tasks.length} tasks. rationale: ${spec.rationale}`);
+      log(`plan: ${spec.nodes.length} top-level nodes. rationale: ${spec.rationale}`);
       printPlan(spec, log);
 
-      if (options.interactive && !(await confirmPlan(spec))) {
+      if (options.interactive && !(await confirmPlan())) {
         log('plan rejected by operator; ending run.');
         return finalize('aborted', undefined, turns, executor, store);
       }
 
-      totalTasks += spec.tasks.length;
-      if (totalTasks > maxTotalTasks) {
-        log(`total tasks ${totalTasks} exceeds budget ${maxTotalTasks}; ending run.`);
-        return finalize('budget_exhausted', undefined, turns, executor, store);
+      // Drain the plan: one PlanRunner per turn, possibly many batches.
+      const planRunner = new PlanRunner(spec);
+      const allObservations: Observation[] = [];
+      let batchCount = 0;
+      let budgetBlown = false;
+      let stalled = false;
+
+      while (!planRunner.done()) {
+        const batch = planRunner.nextBatch();
+        if (!batch) {
+          log(`runner stalled with pending: ${planRunner.pending().join(', ')}`);
+          stalled = true;
+          break;
+        }
+        log(`  batch ${batch.index}: ${batch.tasks.length} tasks`);
+        for (const bt of batch.tasks) {
+          const after = (bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : '';
+          log(`    - ${bt.id} (${bt.leaf.type})${after}`);
+        }
+
+        totalTasks += batch.tasks.length;
+        if (totalTasks > maxTotalTasks) {
+          log(`total tasks ${totalTasks} exceeds budget ${maxTotalTasks}; ending run.`);
+          budgetBlown = true;
+          break;
+        }
+
+        const materialized = materializeBatch(
+          batch,
+          `${runId}/turn-${turn}/batch-${batch.index}`,
+          { turn, rationale: spec.rationale, specId: `${runId}:t${turn}:b${batch.index}` },
+        );
+        await materialized.graph.run(executor);
+        const observations = collectObservations(materialized);
+        planRunner.recordObservations(observations);
+        allObservations.push(...observations);
+        batchCount++;
+        printObservationSummary(observations, log);
       }
 
-      const specId = `${runId}:t${turn}`;
-      const materialized = materializeGraph(spec, `${runId}/turn-${turn}`, {
-        turn,
-        rationale: spec.rationale,
-        specId,
-      });
-      await materialized.graph.run(executor);
-      const observations = collectObservations(materialized);
       turns.push({
         turn,
         kind: 'graph',
         rationale: spec.rationale,
-        taskCount: spec.tasks.length,
-        observations,
+        nodeCount: spec.nodes.length,
+        batchCount,
+        observations: allObservations,
       });
-      printObservationSummary(observations, log);
 
+      if (budgetBlown) {
+        return finalize('budget_exhausted', undefined, turns, executor, store);
+      }
+      if (stalled) {
+        return finalize('stalled', undefined, turns, executor, store);
+      }
       if (remaining === 0) {
         log('turn budget reached without an explicit "done"; ending run.');
         return finalize('budget_exhausted', undefined, turns, executor, store);
       }
-      nextInput = renderObservationFeedback({ observations, remainingTurns: remaining });
+      nextInput = renderObservationFeedback({ observations: allObservations, remainingTurns: remaining });
     }
     return finalize('budget_exhausted', undefined, turns, executor, store);
   } finally {
@@ -166,36 +203,54 @@ function finalize(
 }
 
 function printPlan(spec: GraphSpec, log: (line: string) => void): void {
-  for (const t of spec.tasks) {
-    const after = (t.after ?? []).length ? ` after=[${t.after!.join(',')}]` : '';
-    log(`  - ${t.id} (${t.type})${after}: ${summarizePayload(t)}`);
-  }
+  for (const node of spec.nodes) printNode(node, '  ', log);
 }
 
-function summarizePayload(t: GraphSpec['tasks'][number]): string {
-  switch (t.type) {
+function printNode(node: Node, indent: string, log: (line: string) => void): void {
+  const after = (node.after ?? []).length ? ` after=[${node.after!.join(',')}]` : '';
+  if (node.type === 'if') {
+    log(`${indent}- ${node.id} (if cond=${node.cond.kind}/${node.cond.task})${after}`);
+    log(`${indent}  then:`);
+    for (const c of node.then) printNode(c, indent + '    ', log);
+    if (node.else && node.else.length) {
+      log(`${indent}  else:`);
+      for (const c of node.else) printNode(c, indent + '    ', log);
+    }
+    return;
+  }
+  if (node.type === 'foreach') {
+    const items = node.over.kind === 'literal' ? node.over.items.length : '?';
+    log(`${indent}- ${node.id} (foreach ${node.as} over ${items} items)${after}`);
+    printNode(node.body, indent + '    ', log);
+    return;
+  }
+  log(`${indent}- ${node.id} (${node.type})${after}: ${summarizeLeafPayload(node)}`);
+}
+
+function summarizeLeafPayload(node: Extract<Node, { type: 'bash' | 'read-log' | 'journal' | 'report' | 'note' }>): string {
+  switch (node.type) {
     case 'bash':
-      return `${t.payload.command} ${t.payload.args.join(' ')}`.trim();
+      return `${node.payload.command} ${node.payload.args.join(' ')}`.trim();
     case 'read-log':
-      return `${t.payload.path} tail=${t.payload.tailLines}${t.payload.grep ? ` grep="${t.payload.grep}"` : ''}`;
+      return `${node.payload.path} tail=${node.payload.tailLines}${node.payload.grep ? ` grep="${node.payload.grep}"` : ''}`;
     case 'journal':
-      return `since=${t.payload.since}${t.payload.priority ? ` priority=${t.payload.priority}` : ''}${t.payload.unit ? ` unit=${t.payload.unit}` : ''}`;
+      return `since=${node.payload.since}${node.payload.priority ? ` priority=${node.payload.priority}` : ''}${node.payload.unit ? ` unit=${node.payload.unit}` : ''}`;
     case 'report':
-      return `prompt: ${t.payload.prompt.slice(0, 80)}${t.payload.prompt.length > 80 ? '...' : ''}`;
+      return `prompt: ${node.payload.prompt.slice(0, 80)}${node.payload.prompt.length > 80 ? '...' : ''}`;
     case 'note':
-      return `"${t.payload.text.slice(0, 80)}${t.payload.text.length > 80 ? '...' : ''}"`;
+      return `"${node.payload.text.slice(0, 80)}${node.payload.text.length > 80 ? '...' : ''}"`;
   }
 }
 
 function printObservationSummary(observations: Observation[], log: (line: string) => void): void {
   for (const o of observations) {
     const flag = o.status === 'succeeded' ? 'ok' : o.status;
-    log(`    [${flag}] ${o.id} ${o.title} (${o.durationMs}ms, ${o.output.totalLines} lines${o.output.truncated ? ', truncated' : ''})`);
-    if (o.error) log(`        error: ${o.error.split('\n')[0]}`);
+    log(`      [${flag}] ${o.id} ${o.title} (${o.durationMs}ms, ${o.output.totalLines} lines${o.output.truncated ? ', truncated' : ''})`);
+    if (o.error) log(`          error: ${o.error.split('\n')[0]}`);
   }
 }
 
-async function confirmPlan(_spec: GraphSpec): Promise<boolean> {
+async function confirmPlan(): Promise<boolean> {
   if (!process.stdin.isTTY) return true;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
