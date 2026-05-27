@@ -47,13 +47,12 @@ export function collectObservations(
 }
 
 function observeTask(task: Task, id: string, leaf: LeafNode, headN: number, tailN: number): Observation {
-  const raw = task.result?.output ?? '';
-  const lines = raw.length === 0 ? [] : raw.replace(/\r\n/g, '\n').split('\n');
-  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  const lines = (task.result?.output ?? '').replace(/\r\n/g, '\n').split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
 
   const totalLines = lines.length;
   const truncated = totalLines > headN + tailN;
-  const headLines = truncated ? lines.slice(0, headN) : lines.slice(0, Math.min(headN, totalLines));
+  const headLines = lines.slice(0, headN);
   const tailLines = truncated ? lines.slice(-tailN) : [];
 
   const observation: Observation = {
