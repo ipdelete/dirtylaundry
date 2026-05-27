@@ -117,11 +117,8 @@ export function makeBashHandler(options: BashHandlerOptions) {
     if (!allowlist.has(payload.command)) {
       throw new Error(`bash command not in effective allowlist for this host: ${payload.command}`);
     }
-    const argPolicy = BASH_ARG_POLICIES[payload.command];
-    if (argPolicy) {
-      const err = argPolicy(payload.args);
-      if (err) throw new Error(`bash arg policy violation: ${err}`);
-    }
+    const argErr = BASH_ARG_POLICIES[payload.command]?.(payload.args);
+    if (argErr) throw new Error(`bash arg policy violation: ${argErr}`);
     return runProcess(payload.command, payload.args, context.signal);
   };
 }
