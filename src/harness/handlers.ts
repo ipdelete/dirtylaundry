@@ -103,6 +103,13 @@ async function runProcess(
     let stdout = '';
     let stderr = '';
     let truncated = false;
+    const append = (current: string, chunk: string): string => {
+      if (current.length + chunk.length > maxBytes) {
+        truncated = true;
+        return current + chunk.slice(0, Math.max(0, maxBytes - current.length));
+      }
+      return current + chunk;
+    };
     const onAbort = (): void => {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 2000).unref();
@@ -110,18 +117,8 @@ async function runProcess(
     signal.addEventListener('abort', onAbort, { once: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      if (stdout.length + chunk.length > maxBytes) {
-        stdout = `${stdout}${chunk.slice(0, Math.max(0, maxBytes - stdout.length))}`;
-        truncated = true;
-      } else stdout += chunk;
-    });
-    child.stderr.on('data', (chunk: string) => {
-      if (stderr.length + chunk.length > maxBytes) {
-        stderr = `${stderr}${chunk.slice(0, Math.max(0, maxBytes - stderr.length))}`;
-        truncated = true;
-      } else stderr += chunk;
-    });
+    child.stdout.on('data', (chunk: string) => { stdout = append(stdout, chunk); });
+    child.stderr.on('data', (chunk: string) => { stderr = append(stderr, chunk); });
     child.on('error', (err) => {
       signal.removeEventListener('abort', onAbort);
       reject(err);
