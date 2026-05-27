@@ -166,15 +166,13 @@ function printPlan(reader: RunsReader, plan: PlanRow, full: boolean): void {
   // group tasks by batch index parsed from metadata.specId
   const byBatch = new Map<number, TaskRow[]>();
   for (const t of tasks) {
-    const meta = safeParse(t.metadata_json) ?? {};
-    const specId = String((meta as Record<string, unknown>).specId ?? '');
-    const batchMatch = specId.match(/:b(\d+)$/);
-    const batch = batchMatch ? Number(batchMatch[1]) : -1;
-    if (!byBatch.has(batch)) byBatch.set(batch, []);
-    byBatch.get(batch)!.push(t);
+    const meta = safeParse(t.metadata_json) as Record<string, unknown> | null;
+    const m = String(meta?.specId ?? '').match(/:b(\d+)$/);
+    const batch = m ? Number(m[1]) : -1;
+    const list = byBatch.get(batch);
+    if (list) list.push(t); else byBatch.set(batch, [t]);
   }
-  const sortedBatches = Array.from(byBatch.keys()).sort((a, b) => a - b);
-  for (const b of sortedBatches) {
+  for (const b of Array.from(byBatch.keys()).sort((x, y) => x - y)) {
     console.log(`\nbatch ${b}:`);
     for (const t of byBatch.get(b)!) printTask(t, full);
   }
