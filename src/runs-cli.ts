@@ -211,8 +211,7 @@ function printTask(t: TaskRow, full: boolean): void {
   const output = result?.output ?? '';
   if (output) {
     if (full) {
-      const indented = output.split('\n').map((l) => `        ${l}`).join('\n');
-      console.log(indented);
+      console.log(output.split('\n').map((l) => `        ${l}`).join('\n'));
     } else {
       const lines = output.replace(/\r\n/g, '\n').split('\n');
       if (lines.length && lines[lines.length - 1] === '') lines.pop();
