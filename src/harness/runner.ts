@@ -113,14 +113,8 @@ export class PlanRunner {
 
   private depsSatisfied(after: string[] | undefined): boolean {
     for (const dep of after ?? []) {
-      const expanded = this.expansion.get(dep);
-      if (expanded) {
-        for (const child of expanded) {
-          if (this.status.get(child) !== 'done') return false;
-        }
-      } else if (this.status.get(dep) !== 'done') {
-        return false;
-      }
+      const targets = this.expansion.get(dep) ?? [dep];
+      for (const t of targets) if (this.status.get(t) !== 'done') return false;
     }
     return true;
   }
