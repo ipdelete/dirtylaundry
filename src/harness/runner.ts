@@ -133,9 +133,7 @@ export class PlanRunner {
       out.add(id);
     };
     for (const dep of after) {
-      const expanded = this.expansion.get(dep);
-      if (expanded) for (const child of expanded) add(child);
-      else add(dep);
+      for (const t of this.expansion.get(dep) ?? [dep]) add(t);
     }
     return out.size ? Array.from(out) : undefined;
   }
