@@ -138,42 +138,31 @@ export class PlanRunner {
     if (node.type === 'if') {
       if (!this.observations.has(node.cond.task)) return false;
       const branch = this.evalCondition(node.cond) ? node.then : (node.else ?? []);
-      const childIds: string[] = [];
-      for (let i = 0; i < branch.length; i++) {
-        const leaf = branch[i];
-        const childId = `${node.id}__${i}_${leaf.id}`;
-        this.dynamicLeaves.push({
-          id: childId,
-          leaf: withId(leaf, childId),
-          after: node.after,
-        });
-        this.status.set(childId, 'pending');
-        childIds.push(childId);
-      }
-      this.expansion.set(node.id, childIds);
+      this.registerExpansion(node, branch.map((leaf, i) => {
+        const id = `${node.id}__${i}_${leaf.id}`;
+        return { id, leaf: withId(leaf, id) };
+      }));
       return true;
     }
     if (node.type === 'foreach') {
       if (node.over.kind !== 'literal') {
         throw new Error(`foreach ${node.id}: only kind=literal is supported`);
       }
-      const childIds: string[] = [];
-      for (let i = 0; i < node.over.items.length; i++) {
-        const item = node.over.items[i];
-        const childId = `${node.id}__${i}`;
-        const expandedLeaf = substituteLeaf(node.body, node.as, item, childId);
-        this.dynamicLeaves.push({
-          id: childId,
-          leaf: expandedLeaf,
-          after: node.after,
-        });
-        this.status.set(childId, 'pending');
-        childIds.push(childId);
-      }
-      this.expansion.set(node.id, childIds);
+      this.registerExpansion(node, node.over.items.map((item, i) => {
+        const id = `${node.id}__${i}`;
+        return { id, leaf: substituteLeaf(node.body, node.as, item, id) };
+      }));
       return true;
     }
     return false;
+  }
+
+  private registerExpansion(parent: Node, children: Array<{ id: string; leaf: LeafNode }>): void {
+    for (const { id, leaf } of children) {
+      this.dynamicLeaves.push({ id, leaf, after: parent.after });
+      this.status.set(id, 'pending');
+    }
+    this.expansion.set(parent.id, children.map((c) => c.id));
   }
 
   private evalCondition(cond: Condition): boolean {
