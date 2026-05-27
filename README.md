@@ -34,30 +34,55 @@ pnpm agent:create:bash     # LLM emits a bash-only ttasks graph (legacy spike)
 pnpm graph:bash
 pnpm agent:create:prompt   # LLM emits a bash+prompt ttasks graph (legacy spike)
 pnpm graph:prompt
-pnpm harness:smoke         # planner-emits-graph harness, no LLM, hand-written spec
-pnpm logwatch              # planner-emits-graph harness, live
+pnpm harness:smoke         # harness, no LLM, hand-written GraphSpec
+pnpm start                 # harness, live (= `pnpm dirtylaundry`)
 pnpm typecheck
 ```
 
-## logwatch
+## dirtylaundry
 
-The first app on the harness substrate. The planner (Copilot via pi-agent-core)
-emits a `GraphSpec` (JSON) each turn; the harness validates, materializes a
-ttasks `TaskGraph`, runs it, and feeds compact observations back in. No tools.
+The planner (Copilot via pi-agent-core) emits a `GraphSpec` (JSON) each turn;
+the harness validates, materializes a ttasks `TaskGraph`, runs it, and feeds
+compact observations back in. No tools, only a curated task palette.
 
 ```bash
-pnpm logwatch                                # default goal, sqlite store
-pnpm logwatch --max-turns 3 "what changed?"  # custom goal, turn budget
-pnpm logwatch --interactive                  # confirm each plan before run
-pnpm logwatch --no-store                     # skip sqlite persistence
+dirtylaundry                                    # default goal, sqlite store
+dirtylaundry "Do a security review of the logs"
+dirtylaundry --max-turns 3 "what changed?"
+dirtylaundry --interactive                      # confirm each plan before run
+dirtylaundry --no-store                         # skip sqlite persistence
+echo "audit the last hour of journal warnings" | dirtylaundry
 ```
+
+### Install the `dirtylaundry` command
+
+One-line shim that execs the CLI via `tsx`:
+
+```bash
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/dirtylaundry <<'SHIM'
+#!/usr/bin/env bash
+DIRTYLAUNDRY_ROOT="${DIRTYLAUNDRY_ROOT:-$HOME/src/dirtylaundry}"
+cd "$DIRTYLAUNDRY_ROOT" && exec ./node_modules/.bin/tsx src/cli.ts "$@"
+SHIM
+chmod +x ~/.local/bin/dirtylaundry
+```
+
+Make sure `~/.local/bin` is on your `PATH`. Set `DIRTYLAUNDRY_ROOT` if the
+repo lives elsewhere.
+
+### Persistence
 
 Runs persist to `~/.local/state/dirtylaundry/runs.db` (or
 `$XDG_STATE_HOME/dirtylaundry/runs.db`). Each task is stamped with metadata
 `{specId, turn, rationale, specTaskId, specType}` so a future
 `dirtylaundry runs show <id>` can reconstruct context.
 
-The palette is curated, not generic:
+### Task palette
+
+Curated, not generic. The planner is told to return `done` with a "palette
+gap" report rather than contort when a goal needs capabilities the palette
+does not provide.
 
 ```txt
 journal   journalctl with safe defaults

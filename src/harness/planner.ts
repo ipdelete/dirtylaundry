@@ -58,6 +58,7 @@ export const PLANNER_SYSTEM_PROMPT = [
   ' - On the last turn, return { "kind": "done", "report": ... }.',
   ' - For final synthesis, include a `report` task in an earlier turn so the report has fresh context, then summarize its output in your "done" report.',
   ' - Do not invent task types, commands, or fields. Stay strictly within the schema.',
+  ' - PALETTE GAP RULE: If the goal cannot be honestly answered with the available task types, do not contort or guess. Return { "kind": "done", "report": ... } immediately, stating plainly which task type(s) or capabilities would be needed. A short, honest "cannot answer with this palette" report is better than a confident-looking report built on data you could not actually gather.',
 ].join('\n');
 
 export interface PlannerTurnRecord {

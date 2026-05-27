@@ -129,7 +129,7 @@ For "gather → cross-reference → summarize" problems, planner-emits-graph is:
 - [x] 4. observation collector — `src/harness/observe.ts`
 - [x] 5. planner agent — `src/harness/planner.ts`, Copilot-backed pi-agent-core Agent, strict JSON system prompt, tolerant parser
 - [x] 6. loop + budgets + confirmation — `src/harness/loop.ts` (`runHarness`); budgets `maxTurns`, `maxTotalTasks`, `maxParseRetries`; `--interactive` plan confirmation; SIGINT aborts planner; surfaces `executor.persistenceErrors`
-- [x] 7. logwatch CLI — `src/logwatch.ts` → `pnpm logwatch [--interactive] [--max-turns N] [--no-store] [--reasoning level] [goal...]`
+- [x] 7. dirtylaundry CLI — `src/cli.ts`. Goal from positional args or stdin. `~/.local/bin/dirtylaundry` shim documented in README.
 - [x] Sqlite store — `src/harness/store.ts`, default path `~/.local/state/dirtylaundry/runs.db` (honors `$XDG_STATE_HOME`)
 
 Live verification: `pnpm logwatch --max-turns 3` produced a valid 6-task plan on turn 0 and `done` on turn 1, with a real summary of recent journal issues. Smoke test (`pnpm harness:smoke`) exercises the same path against a hand-written GraphSpec, no LLM.

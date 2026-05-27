@@ -3,13 +3,14 @@ import { runHarness } from './harness/loop.js';
 import { PLANNER_MODEL_INFO } from './harness/planner.js';
 
 /**
- * logwatch: first app on the planner-emits-graph substrate.
+ * dirtylaundry: planner-emits-graph harness CLI.
  *
  * Usage:
- *   pnpm logwatch [--interactive] [--max-turns N] [--no-store] [goal...]
+ *   dirtylaundry [flags] [goal...]
+ *   echo "goal" | dirtylaundry [flags]
  *
- * Default goal: "Review system state and tell me anything I should know about
- * from the last 24 hours."
+ * If no goal is given as args and stdin is piped, the goal is read from stdin.
+ * If no goal is given and stdin is a TTY, a sensible default is used.
  */
 
 interface Args {
@@ -18,13 +19,22 @@ interface Args {
   maxTurns?: number;
   store: 'sqlite' | 'none';
   reasoning?: string;
+  goalFromStdin: boolean;
 }
 
-function parseArgs(argv: string[]): Args {
+async function readStdin(): Promise<string> {
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) data += chunk;
+  return data.trim();
+}
+
+async function parseArgs(argv: string[]): Promise<Args> {
   const args: Args = {
     goal: '',
     interactive: false,
     store: 'sqlite',
+    goalFromStdin: false,
   };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -38,24 +48,33 @@ function parseArgs(argv: string[]): Args {
     } else if (a === '--reasoning') {
       args.reasoning = argv[++i];
     } else if (a === '--help' || a === '-h') {
-      console.log('Usage: pnpm logwatch [--interactive] [--max-turns N] [--no-store] [--reasoning low|medium|high] [goal...]');
+      console.log('Usage: dirtylaundry [--interactive] [--max-turns N] [--no-store] [--reasoning low|medium|high] [goal...]');
+      console.log('       echo "goal" | dirtylaundry [flags]');
       process.exit(0);
     } else {
       rest.push(a);
     }
   }
-  args.goal =
-    rest.length > 0
-      ? rest.join(' ')
-      : 'Review system state and tell me anything I should know about from the last 24 hours.';
+  if (rest.length > 0) {
+    args.goal = rest.join(' ');
+  } else if (!process.stdin.isTTY) {
+    const piped = await readStdin();
+    if (piped) {
+      args.goal = piped;
+      args.goalFromStdin = true;
+    }
+  }
+  if (!args.goal) {
+    args.goal = 'Review system state and tell me anything I should know about from the last 24 hours.';
+  }
   return args;
 }
 
-const args = parseArgs(process.argv.slice(2));
+const args = await parseArgs(process.argv.slice(2));
 await requireGitHubCopilotApiKey();
 
-console.log(`logwatch using planner=${PLANNER_MODEL_INFO}`);
-console.log(`goal: ${args.goal}`);
+console.log(`dirtylaundry using planner=${PLANNER_MODEL_INFO}`);
+console.log(`goal${args.goalFromStdin ? ' (from stdin)' : ''}: ${args.goal}`);
 
 const result = await runHarness({
   goal: args.goal,

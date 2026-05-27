@@ -5,14 +5,18 @@
   "description": "Experimental circular pi-agent-core <-> ttasks-ts integration spike.",
   "type": "module",
   "packageManager": "pnpm@11.3.0",
+  "bin": {
+    "dirtylaundry": "./src/cli.ts"
+  },
   "scripts": {
+    "start": "tsx src/cli.ts",
+    "dirtylaundry": "tsx src/cli.ts",
     "hello": "tsx src/pi-agent-hello.ts",
     "agent:create:bash": "tsx src/agent-create-graph.ts bash",
     "agent:create:prompt": "tsx src/agent-create-graph.ts prompt",
     "graph:bash": "tsx src/generated/bash-graph.ts",
     "graph:prompt": "tsx src/generated/bash-and-prompt-graph.ts",
     "harness:smoke": "tsx src/harness-smoke.ts",
-    "logwatch": "tsx src/logwatch.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },
