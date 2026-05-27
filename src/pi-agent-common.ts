@@ -50,11 +50,7 @@ export function createGitHubCopilotAgent(options: CreateCopilotAgentOptions = {}
     },
   });
 
-  if (options.onEvent) {
-    agent.subscribe((event) => {
-      options.onEvent?.(event);
-    });
-  }
+  if (options.onEvent) agent.subscribe(options.onEvent);
 
   return agent;
 }
