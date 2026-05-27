@@ -231,8 +231,7 @@ function printTask(t: TaskRow, full: boolean): void {
 }
 
 function pad(s: string, n: number): string {
-  if (s.length >= n) return s.slice(0, n - 1) + ' ';
-  return s + ' '.repeat(n - s.length);
+  return s.length >= n ? s.slice(0, n - 1) + ' ' : s.padEnd(n);
 }
 
 function parseLimit(args: string[], def: number): number {
