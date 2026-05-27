@@ -67,9 +67,7 @@ async function parseArgs(argv: string[]): Promise<Args> {
       args.goalFromStdin = true;
     }
   }
-  if (!args.goal) {
-    args.goal = 'Review system state and tell me anything I should know about from the last 24 hours.';
-  }
+  args.goal ||= 'Review system state and tell me anything I should know about from the last 24 hours.';
   return args;
 }
 
