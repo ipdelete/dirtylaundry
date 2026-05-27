@@ -7,21 +7,8 @@ export const COPILOT_PROVIDER = 'github-copilot' as const;
 export const COPILOT_MODEL = 'gpt-5.4-mini' as const;
 
 export function reasoningEffortToThinkingLevel(effort: string | null | undefined): ThinkingLevel {
-  switch (effort) {
-    case 'minimal':
-    case 'low':
-    case 'medium':
-    case 'high':
-    case 'xhigh':
-      return effort;
-    case 'none':
-    case 'off':
-    case null:
-    case undefined:
-      return 'off';
-    default:
-      return 'off';
-  }
+  if (effort === 'minimal' || effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh') return effort;
+  return 'off';
 }
 
 export interface CreateCopilotAgentOptions {
