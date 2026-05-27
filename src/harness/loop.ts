@@ -135,8 +135,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
         }
         log(`  batch ${batch.index}: ${batch.tasks.length} tasks`);
         for (const bt of batch.tasks) {
-          const after = (bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : '';
-          log(`    - ${bt.id} (${bt.leaf.type})${after}`);
+          log(`    - ${bt.id} (${bt.leaf.type})${(bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : ''}`);
         }
 
         totalTasks += batch.tasks.length;

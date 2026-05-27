@@ -110,8 +110,7 @@ while (!runner.done()) {
   }
   console.log(`\n--- batch ${batch.index} (${batch.tasks.length} tasks) ---`);
   for (const bt of batch.tasks) {
-    const after = (bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : '';
-    console.log(`  - ${bt.id} (${bt.leaf.type})${after}`);
+    console.log(`  - ${bt.id} (${bt.leaf.type})${(bt.after ?? []).length ? ` after=[${bt.after!.join(',')}]` : ''}`);
   }
   const materialized = materializeBatch(batch, `${runId}/batch-${batch.index}`, {
     turn: batch.index,
