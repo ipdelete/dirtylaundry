@@ -107,35 +107,34 @@ function cmdPlan(reader: RunsReader, args: string[]): number {
   }
   const full = args.includes('--full');
   // planId format: <runId>:t<N>. Accept prefix match on planId itself.
-  const plans = reader
-    .listRuns(500)
-    .flatMap((r) => reader.plansForRun(r.id))
-    .filter((p) => p.id === idOrPrefix || p.id.startsWith(idOrPrefix));
-  if (plans.length === 0) {
-    console.error(`no plan matches ${idOrPrefix}`);
-    return 1;
-  }
-  if (plans.length > 1) {
-    console.error(`ambiguous plan id; ${plans.length} matches:`);
-    for (const p of plans) console.error(`  ${p.id}`);
-    return 1;
-  }
-  printPlan(reader, plans[0], full);
+  const plan = uniqueByPrefix(
+    reader.listRuns(500).flatMap((r) => reader.plansForRun(r.id))
+      .filter((p) => p.id === idOrPrefix || p.id.startsWith(idOrPrefix)),
+    'plan',
+    idOrPrefix,
+  );
+  if (!plan) return 1;
+  printPlan(reader, plan, full);
   return 0;
 }
 
 // ---- helpers ----
 
 function resolveRun(reader: RunsReader, idOrPrefix: string): RunRow | null {
-  const exact = reader.getRun(idOrPrefix);
-  if (exact) return exact;
-  const matches = reader.listRuns(500).filter((r) => r.id.startsWith(idOrPrefix));
+  return reader.getRun(idOrPrefix) ?? uniqueByPrefix(
+    reader.listRuns(500).filter((r) => r.id.startsWith(idOrPrefix)),
+    'run',
+    idOrPrefix,
+  );
+}
+
+function uniqueByPrefix<T extends { id: string }>(matches: readonly T[], kind: string, idOrPrefix: string): T | null {
   if (matches.length === 0) {
-    console.error(`no run matches ${idOrPrefix}`);
+    console.error(`no ${kind} matches ${idOrPrefix}`);
     return null;
   }
   if (matches.length > 1) {
-    console.error(`ambiguous run id; ${matches.length} matches:`);
+    console.error(`ambiguous ${kind} id; ${matches.length} matches:`);
     for (const m of matches) console.error(`  ${m.id}`);
     return null;
   }
