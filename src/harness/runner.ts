@@ -104,9 +104,7 @@ export class PlanRunner {
   /** For if nodes, the cond's referenced task is an implicit dep. */
   private effectiveAfter(node: Node): string[] | undefined {
     if (node.type !== 'if') return node.after;
-    const set = new Set(node.after ?? []);
-    set.add(node.cond.task);
-    return Array.from(set);
+    return [...new Set([...(node.after ?? []), node.cond.task])];
   }
 
   private depsSatisfied(after: string[] | undefined): boolean {
