@@ -60,11 +60,9 @@ export function which(bin: string): string | null {
 }
 
 export function detectCapabilities(): HostCapabilities {
-  const present = new Set<string>();
-  for (const bin of DECLARED_BASH_ALLOWLIST) if (which(bin)) present.add(bin);
   return {
     platform: process.platform,
-    effectiveBashAllowlist: present,
+    effectiveBashAllowlist: new Set(DECLARED_BASH_ALLOWLIST.filter((bin) => which(bin))),
     hasJournalctl: which('journalctl') !== null,
     hasTail: which('tail') !== null,
     hasGrep: which('grep') !== null,
