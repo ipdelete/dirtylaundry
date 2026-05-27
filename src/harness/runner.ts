@@ -210,9 +210,7 @@ function substituteLeaf(leaf: LeafNode, as: string, item: string, newId: string)
     if (typeof v === 'string') return sub(v);
     if (Array.isArray(v)) return v.map(subAny);
     if (v && typeof v === 'object') {
-      const out: Record<string, unknown> = {};
-      for (const [k, vv] of Object.entries(v as Record<string, unknown>)) out[k] = subAny(vv);
-      return out;
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, vv]) => [k, subAny(vv)]));
     }
     return v;
   };
