@@ -50,8 +50,10 @@ function printHelp(): void {
 // ---- list ----
 
 function cmdList(reader: RunsReader, args: string[]): number {
-  const limit = parseLimit(args, 20);
-  const rows = reader.listRuns(limit);
+  const idx = args.indexOf('--limit');
+  const limit = idx >= 0 && args[idx + 1] ? Number(args[idx + 1]) : 20;
+  const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
+  const rows = reader.listRuns(n);
   if (rows.length === 0) {
     console.log('(no runs recorded yet)');
     return 0;
@@ -232,15 +234,6 @@ function printTask(t: TaskRow, full: boolean): void {
 
 function pad(s: string, n: number): string {
   return s.length >= n ? s.slice(0, n - 1) + ' ' : s.padEnd(n);
-}
-
-function parseLimit(args: string[], def: number): number {
-  const idx = args.indexOf('--limit');
-  if (idx >= 0 && args[idx + 1]) {
-    const n = Number(args[idx + 1]);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return def;
 }
 
 function safeParse(s: string | null): unknown {
