@@ -1,6 +1,7 @@
 import { GraphSpec, PlannerOutput, validateGraphSpec } from './harness/schema.js';
 import { buildHarnessExecutor, materializeGraph } from './harness/materialize.js';
 import { collectObservations } from './harness/observe.js';
+import { openRunsStore } from './harness/store.js';
 
 /**
  * Smoke test for harness steps 1-4:
@@ -48,8 +49,9 @@ if (!structural.ok) {
 }
 console.log(`plan: ${spec.tasks.length} tasks, rationale="${spec.rationale}"`);
 
-const executor = buildHarnessExecutor();
-const materialized = materializeGraph(spec, 'smoke-graph');
+const store = openRunsStore();
+const executor = buildHarnessExecutor({ store });
+const materialized = materializeGraph(spec, 'smoke-graph', { turn: 0, rationale: spec.rationale, specId: 'smoke' });
 
 await materialized.graph.run(executor);
 
@@ -58,3 +60,4 @@ console.log('\n=== observations ===');
 console.log(JSON.stringify(observations, null, 2));
 
 await executor.close();
+store.close();

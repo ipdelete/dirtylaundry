@@ -123,12 +123,13 @@ For "gather → cross-reference → summarize" problems, planner-emits-graph is:
 
 ## Status
 
-- [x] 1. schemas — `src/harness/schema.ts`, Zod + structural validate (unique ids, edges resolve, no cycles)
-- [x] 2. materializer — `src/harness/materialize.ts`, `GraphSpec -> TaskGraph` via `Task.custom` + `Task.prompt`
-- [x] 3. handlers — `src/harness/handlers.ts` (bash allowlist, read-log under /var/log, journal, note); report handled by `makeCopilotPromptHandler` + `PiAgentCopilotProvider`
-- [x] 4. observation collector — `src/harness/observe.ts`, head+tail+count
-- [ ] 5. planner agent
-- [ ] 6. loop + budgets + confirmation
-- [ ] 7. logwatch CLI
+- [x] 1. schemas — `src/harness/schema.ts`
+- [x] 2. materializer — `src/harness/materialize.ts` (also stamps task metadata with `{specId, turn, rationale}`)
+- [x] 3. handlers — `src/harness/handlers.ts`
+- [x] 4. observation collector — `src/harness/observe.ts`
+- [x] 5. planner agent — `src/harness/planner.ts`, Copilot-backed pi-agent-core Agent, strict JSON system prompt, tolerant parser
+- [x] 6. loop + budgets + confirmation — `src/harness/loop.ts` (`runHarness`); budgets `maxTurns`, `maxTotalTasks`, `maxParseRetries`; `--interactive` plan confirmation; SIGINT aborts planner; surfaces `executor.persistenceErrors`
+- [x] 7. logwatch CLI — `src/logwatch.ts` → `pnpm logwatch [--interactive] [--max-turns N] [--no-store] [--reasoning level] [goal...]`
+- [x] Sqlite store — `src/harness/store.ts`, default path `~/.local/state/dirtylaundry/runs.db` (honors `$XDG_STATE_HOME`)
 
-Smoke test: `pnpm harness:smoke` runs a hand-written `GraphSpec` end-to-end (no LLM) and prints observations. Pausing here per plan to sanity-check schemas and palette before wiring the planner loop.
+Live verification: `pnpm logwatch --max-turns 3` produced a valid 6-task plan on turn 0 and `done` on turn 1, with a real summary of recent journal issues. Smoke test (`pnpm harness:smoke`) exercises the same path against a hand-written GraphSpec, no LLM.

@@ -4,6 +4,7 @@ import {
   TaskGraph,
   TaskType,
   makeCopilotPromptHandler,
+  type Store,
 } from '@ianphil/ttasks-ts';
 
 import { PiAgentCopilotProvider } from '../pi-agent-copilot-provider.js';
@@ -22,10 +23,11 @@ export interface BuildExecutorOptions {
   reportSystemPrompt?: string;
   reportModel?: string;
   reportTimeoutSeconds?: number;
+  store?: Store;
 }
 
 export function buildHarnessExecutor(options: BuildExecutorOptions = {}): TaskExecutor {
-  const executor = new TaskExecutor();
+  const executor = new TaskExecutor(options.store ? { store: options.store } : undefined);
   executor.register(HarnessTaskType.BASH, bashHandler);
   executor.register(HarnessTaskType.READ_LOG, readLogHandler);
   executor.register(HarnessTaskType.JOURNAL, journalHandler);
@@ -56,25 +58,39 @@ export interface MaterializeResult {
   specById: Map<string, GraphTask>;
 }
 
-export function materializeGraph(spec: GraphSpec, title = 'planner-graph'): MaterializeResult {
+export interface MaterializeOptions {
+  /** Stamped onto each task's metadata so a future `runs show` can reconstruct context. */
+  turn?: number;
+  rationale?: string;
+  specId?: string;
+}
+
+export function materializeGraph(
+  spec: GraphSpec,
+  title = 'planner-graph',
+  options: MaterializeOptions = {},
+): MaterializeResult {
   const graph = new TaskGraph({ title });
   const taskById = new Map<string, Task>();
   const specById = new Map<string, GraphTask>();
   for (const entry of spec.tasks) specById.set(entry.id, entry);
 
-  // Build in declaration order. Dependencies are validated upstream
-  // (validateGraphSpec) so any dep referenced is already in spec.tasks.
   for (const entry of spec.tasks) {
     const task = buildTask(entry);
+    // Metadata is the right place to stash planner-side context. ttasks treats
+    // it as opaque; queries against runs.db later can reconstruct *why*.
+    task.metadata = {
+      specTaskId: entry.id,
+      specType: entry.type,
+      ...(options.specId ? { specId: options.specId } : {}),
+      ...(options.turn !== undefined ? { turn: options.turn } : {}),
+      ...(options.rationale ? { rationale: options.rationale } : {}),
+    };
     taskById.set(entry.id, task);
 
     const after = (entry.after ?? []).map((depId) => {
       const dep = taskById.get(depId);
-      if (!dep) {
-        // Forward reference. Shouldn't happen given validateGraphSpec ran,
-        // but guard anyway.
-        throw new Error(`materializeGraph: forward dependency ${entry.id} -> ${depId}`);
-      }
+      if (!dep) throw new Error(`materializeGraph: forward dependency ${entry.id} -> ${depId}`);
       return dep;
     });
     graph.add(task, after.length ? { after } : undefined);

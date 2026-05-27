@@ -12,6 +12,7 @@
     "graph:bash": "tsx src/generated/bash-graph.ts",
     "graph:prompt": "tsx src/generated/bash-and-prompt-graph.ts",
     "harness:smoke": "tsx src/harness-smoke.ts",
+    "logwatch": "tsx src/logwatch.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json"
   },
