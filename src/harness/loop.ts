@@ -205,13 +205,7 @@ function finalize(
   recorder?.finishRun({ runId, status, report });
   recorder?.close();
   void executor.close().catch(() => undefined);
-  if (store) {
-    try {
-      store.close();
-    } catch {
-      // ignore close errors
-    }
-  }
+  try { store?.close(); } catch { /* ignore close errors */ }
   return { status, report, turns, persistenceErrors };
 }
 
