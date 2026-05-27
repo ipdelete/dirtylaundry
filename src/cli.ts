@@ -1,6 +1,7 @@
 import { requireGitHubCopilotApiKey } from './copilot-auth.js';
 import { runHarness } from './harness/loop.js';
 import { PLANNER_MODEL_INFO } from './harness/planner.js';
+import { runsCli } from './runs-cli.js';
 
 /**
  * dirtylaundry: planner-emits-graph harness CLI.
@@ -8,6 +9,7 @@ import { PLANNER_MODEL_INFO } from './harness/planner.js';
  * Usage:
  *   dirtylaundry [flags] [goal...]
  *   echo "goal" | dirtylaundry [flags]
+ *   dirtylaundry runs <list|show|plan> [...]
  *
  * If no goal is given as args and stdin is piped, the goal is read from stdin.
  * If no goal is given and stdin is a TTY, a sensible default is used.
@@ -50,6 +52,7 @@ async function parseArgs(argv: string[]): Promise<Args> {
     } else if (a === '--help' || a === '-h') {
       console.log('Usage: dirtylaundry [--interactive] [--max-turns N] [--no-store] [--reasoning low|medium|high] [goal...]');
       console.log('       echo "goal" | dirtylaundry [flags]');
+      console.log('       dirtylaundry runs <list|show|plan> [...]');
       process.exit(0);
     } else {
       rest.push(a);
@@ -70,7 +73,13 @@ async function parseArgs(argv: string[]): Promise<Args> {
   return args;
 }
 
-const args = await parseArgs(process.argv.slice(2));
+const rawArgv = process.argv.slice(2);
+if (rawArgv[0] === 'runs') {
+  const code = await runsCli(rawArgv.slice(1));
+  process.exit(code);
+}
+
+const args = await parseArgs(rawArgv);
 await requireGitHubCopilotApiKey();
 
 console.log(`dirtylaundry using planner=${PLANNER_MODEL_INFO}`);

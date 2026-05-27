@@ -15,8 +15,9 @@ import {
   type Planner,
 } from './planner.js';
 import { PlanRunner } from './runner.js';
+import { RunsRecorder } from './runs-recorder.js';
 import type { GraphSpec, Node } from './schema.js';
-import { openRunsStore } from './store.js';
+import { defaultRunsDbPath, openRunsStore } from './store.js';
 
 export interface RunHarnessOptions {
   goal: string;
@@ -60,13 +61,16 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
   const maxParseRetries = options.maxParseRetries ?? DEFAULTS.maxParseRetries;
   const useStore = (options.store ?? 'sqlite') === 'sqlite';
 
-  const store = useStore ? openRunsStore(options.storePath) : undefined;
+  const storePath = options.storePath ?? defaultRunsDbPath();
+  const store = useStore ? openRunsStore(storePath) : undefined;
+  const recorder = useStore ? new RunsRecorder(storePath) : undefined;
   const capabilities = detectCapabilities();
   const executor: TaskExecutor = buildHarnessExecutor({ store, capabilities });
   const planner: Planner = createPlanner({ reasoningEffort: options.reasoningEffort });
   const runId = randomUUID();
-  log(`run ${runId} (store: ${useStore ? options.storePath ?? 'default' : 'none'})`);
+  log(`run ${runId} (store: ${useStore ? storePath : 'none'})`);
   log(`host: ${capabilities.platform}, bash[${capabilities.effectiveBashAllowlist.size}/14] avail, journalctl=${capabilities.hasJournalctl}`);
+  recorder?.recordRun({ runId, goal: options.goal, capabilities });
 
   const turns: TurnSummary[] = [];
   let totalTasks = 0;
@@ -92,7 +96,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
         turns.push({ turn, kind: 'parse_error', parseError: parsed.error });
         parseRetries++;
         if (parseRetries > maxParseRetries) {
-          return finalize('parse_retries_exhausted', undefined, turns, executor, store);
+          return finalize('parse_retries_exhausted', undefined, turns, executor, store, recorder, runId);
         }
         nextInput = renderErrorFeedback(parsed.error, remaining);
         continue;
@@ -100,17 +104,19 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
 
       if (parsed.kind === 'done') {
         log('planner signaled done.');
-        return finalize('done', parsed.report, turns, executor, store);
+        return finalize('done', parsed.report, turns, executor, store, recorder, runId);
       }
 
       parseRetries = 0;
       const spec = parsed.spec;
+      const planId = `${runId}:t${turn}`;
+      recorder?.recordPlan({ planId, runId, turn, spec });
       log(`plan: ${spec.nodes.length} top-level nodes. rationale: ${spec.rationale}`);
       printPlan(spec, log);
 
       if (options.interactive && !(await confirmPlan())) {
         log('plan rejected by operator; ending run.');
-        return finalize('aborted', undefined, turns, executor, store);
+        return finalize('aborted', undefined, turns, executor, store, recorder, runId);
       }
 
       // Drain the plan: one PlanRunner per turn, possibly many batches.
@@ -143,7 +149,7 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
         const materialized = materializeBatch(
           batch,
           `${runId}/turn-${turn}/batch-${batch.index}`,
-          { turn, rationale: spec.rationale, specId: `${runId}:t${turn}:b${batch.index}` },
+          { turn, rationale: spec.rationale, specId: `${planId}:b${batch.index}` },
         );
         await materialized.graph.run(executor);
         const observations = collectObservations(materialized);
@@ -162,19 +168,22 @@ export async function runHarness(options: RunHarnessOptions): Promise<RunHarness
         observations: allObservations,
       });
 
+      const planStatus = budgetBlown ? 'budget_exhausted' : stalled ? 'stalled' : 'completed';
+      recorder?.finishPlan({ planId, batchCount, status: planStatus });
+
       if (budgetBlown) {
-        return finalize('budget_exhausted', undefined, turns, executor, store);
+        return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
       }
       if (stalled) {
-        return finalize('stalled', undefined, turns, executor, store);
+        return finalize('stalled', undefined, turns, executor, store, recorder, runId);
       }
       if (remaining === 0) {
         log('turn budget reached without an explicit "done"; ending run.');
-        return finalize('budget_exhausted', undefined, turns, executor, store);
+        return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
       }
       nextInput = renderObservationFeedback({ observations: allObservations, remainingTurns: remaining });
     }
-    return finalize('budget_exhausted', undefined, turns, executor, store);
+    return finalize('budget_exhausted', undefined, turns, executor, store, recorder, runId);
   } finally {
     process.off('SIGINT', onSigint);
   }
@@ -186,11 +195,15 @@ function finalize(
   turns: TurnSummary[],
   executor: TaskExecutor,
   store: ReturnType<typeof openRunsStore> | undefined,
+  recorder: RunsRecorder | undefined,
+  runId: string,
 ): RunHarnessResult {
   const persistenceErrors: RunHarnessResult['persistenceErrors'] = [
     ...executor.persistenceErrors.map((e) => ({ kind: 'task' as const, id: e.taskId, error: e.error.message })),
     ...executor.graphPersistenceErrors.map((e) => ({ kind: 'graph' as const, id: e.graphId, error: e.error.message })),
   ];
+  recorder?.finishRun({ runId, status, report });
+  recorder?.close();
   void executor.close().catch(() => undefined);
   if (store) {
     try {
