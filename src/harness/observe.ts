@@ -63,8 +63,7 @@ function observeTask(task: Task, id: string, leaf: LeafNode, headN: number, tail
     payloadEcho: leaf.payload,
     output: { headLines, tailLines, totalLines, truncated },
   };
-  if (task.result?.error || task.error) {
-    observation.error = task.result?.error ?? task.error;
-  }
+  const error = task.result?.error ?? task.error;
+  if (error) observation.error = error;
   return observation;
 }
