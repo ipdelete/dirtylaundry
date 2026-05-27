@@ -1,1 +1,1 @@
-{"description":"Collapse buildTask leaf->custom-type switch into a lookup table"}
+{"description":"Inline AUX_BINARIES indirection in detectCapabilities"}

@@ -32,10 +32,6 @@ export const DECLARED_BASH_ALLOWLIST: readonly string[] = [
   'pgrep',
 ];
 
-/** Auxiliary binaries the non-bash handlers depend on. Surfaced so the
- * planner knows when `journal` / `read-log` are effectively unavailable. */
-const AUX_BINARIES = ['journalctl', 'tail', 'grep'] as const;
-
 export interface HostCapabilities {
   platform: NodeJS.Platform;
   /** Subset of DECLARED_BASH_ALLOWLIST that exists on this host's $PATH. */
@@ -66,14 +62,12 @@ export function which(bin: string): string | null {
 export function detectCapabilities(): HostCapabilities {
   const present = new Set<string>();
   for (const bin of DECLARED_BASH_ALLOWLIST) if (which(bin)) present.add(bin);
-  const aux: Record<string, boolean> = {};
-  for (const bin of AUX_BINARIES) aux[bin] = which(bin) !== null;
   return {
     platform: process.platform,
     effectiveBashAllowlist: present,
-    hasJournalctl: aux.journalctl,
-    hasTail: aux.tail,
-    hasGrep: aux.grep,
+    hasJournalctl: which('journalctl') !== null,
+    hasTail: which('tail') !== null,
+    hasGrep: which('grep') !== null,
   };
 }
 
