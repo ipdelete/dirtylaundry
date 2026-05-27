@@ -40,8 +40,7 @@ export function collectObservations(
   const out: Observation[] = [];
   for (const [id, leaf] of materialized.leafById) {
     const task = materialized.taskById.get(id);
-    if (!task) continue;
-    out.push(observeTask(task, id, leaf, headN, tailN));
+    if (task) out.push(observeTask(task, id, leaf, headN, tailN));
   }
   return out;
 }
