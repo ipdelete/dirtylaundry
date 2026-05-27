@@ -1,0 +1,27 @@
+{
+  "name": "dirtylaundry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Experimental circular pi-agent-core <-> ttasks-ts integration spike.",
+  "type": "module",
+  "packageManager": "pnpm@11.3.0",
+  "scripts": {
+    "hello": "tsx src/pi-agent-hello.ts",
+    "agent:create:bash": "tsx src/agent-create-graph.ts bash",
+    "agent:create:prompt": "tsx src/agent-create-graph.ts prompt",
+    "graph:bash": "tsx src/generated/bash-graph.ts",
+    "graph:prompt": "tsx src/generated/bash-and-prompt-graph.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.75.5",
+    "@earendil-works/pi-ai": "^0.75.5",
+    "@ianphil/ttasks-ts": "github:ianphil/ttasks-ts#v0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}
