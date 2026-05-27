@@ -1,5 +1,7 @@
 packages: []
 minimumReleaseAge: 0
 allowBuilds:
+  '@google/genai': true
   '@ianphil/ttasks-ts': true
   esbuild: true
+  protobufjs: true
