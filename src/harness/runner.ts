@@ -96,9 +96,7 @@ export class PlanRunner {
 
   /** For diagnostics: ids of nodes still pending. */
   pending(): string[] {
-    const out: string[] = [];
-    for (const [id, s] of this.status) if (s !== 'done') out.push(id);
-    return out;
+    return [...this.status].filter(([, s]) => s !== 'done').map(([id]) => id);
   }
 
   // ---- internals ----
