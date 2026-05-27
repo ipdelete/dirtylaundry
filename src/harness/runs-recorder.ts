@@ -124,11 +124,7 @@ export class RunsRecorder {
   }
 
   close(): void {
-    try {
-      this.db.close();
-    } catch {
-      // ignore
-    }
+    try { this.db.close(); } catch {}
   }
 }
 
@@ -174,10 +170,7 @@ export class RunsReader {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path, { readOnly: true });
-    const found = this.db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('runs','plans')`)
-      .all() as Array<{ name: string }>;
-    this.hasOurTables = found.length === 2;
+    this.hasOurTables = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('runs','plans')`).all().length === 2;
   }
 
   listRuns(limit = 20): RunRow[] {
@@ -224,10 +217,6 @@ export class RunsReader {
   }
 
   close(): void {
-    try {
-      this.db.close();
-    } catch {
-      // ignore
-    }
+    try { this.db.close(); } catch {}
   }
 }
