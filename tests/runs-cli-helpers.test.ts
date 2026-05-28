@@ -34,4 +34,15 @@ describe('uniqueByPrefix', () => {
     assert.equal(stderr[0], 'ambiguous plan id; 2 matches:');
     assert.deepEqual(stderr.slice(1), ['  a1', '  a2']);
   });
+
+  it('prefers an exact id match over a coexisting longer-prefix match', () => {
+    // Regression: previously uniqueByPrefix reported ambiguity even when one
+    // of the candidates was an exact id match, making it impossible to select
+    // e.g. "run-1" once "run-12" also existed.
+    const exact = { id: 'run-1' };
+    const longer = { id: 'run-12' };
+    assert.equal(uniqueByPrefix([exact, longer], 'run', 'run-1'), exact);
+    assert.equal(uniqueByPrefix([longer, exact], 'run', 'run-1'), exact);
+    assert.deepEqual(stderr, []);
+  });
 });

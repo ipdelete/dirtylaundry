@@ -134,6 +134,11 @@ export function uniqueByPrefix<T extends { id: string }>(matches: readonly T[], 
     return null;
   }
   if (matches.length > 1) {
+    // An exact id match always wins over coexisting longer-prefix matches.
+    // Otherwise a user who supplies a full id (e.g. "run-1") cannot select
+    // it once any longer id sharing that prefix exists (e.g. "run-12").
+    const exact = matches.find((m) => m.id === idOrPrefix);
+    if (exact) return exact;
     console.error(`ambiguous ${kind} id; ${matches.length} matches:`);
     for (const m of matches) console.error(`  ${m.id}`);
     return null;
