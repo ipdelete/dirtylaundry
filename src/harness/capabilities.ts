@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 /**
@@ -51,6 +51,12 @@ export function which(bin: string): string | null {
     const full = join(dir, bin);
     try {
       accessSync(full, constants.X_OK);
+      // Directories on Unix carry the executable (traverse) bit, so accessSync
+      // alone happily accepts any directory in PATH whose name matches `bin`.
+      // We only want runnable files, otherwise detectCapabilities marks the
+      // command as available and the planner emits tasks that fail with
+      // ENOENT inside the bash handler at runtime.
+      if (!statSync(full).isFile()) continue;
       return full;
     } catch {
       // try next entry
