@@ -51,7 +51,10 @@ function observeTask(task: Task, id: string, leaf: LeafNode, headN: number, tail
 
   const totalLines = lines.length;
   const truncated = totalLines > headN + tailN;
-  const headLines = lines.slice(0, headN);
+  // When not truncated, head+tail must round-trip to the full output; keep
+  // every line in headLines so consumers like evalCondition's output_contains
+  // don't miss substrings that fall past headN.
+  const headLines = truncated ? lines.slice(0, headN) : lines;
   const tailLines = truncated ? lines.slice(-tailN) : [];
 
   const observation: Observation = {
