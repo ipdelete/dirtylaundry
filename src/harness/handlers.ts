@@ -23,7 +23,25 @@ export interface HandlerResult {
 export const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
   systemctl: (args) => {
     const allowed = new Set(['--failed', '--no-pager', 'status', 'list-units', 'list-unit-files', 'is-active', 'is-enabled', 'show']);
-    for (const a of args) if (!allowed.has(a) && !/^[A-Za-z0-9@._:+-]+\.(service|target|socket|timer|mount|path|scope|slice)$/.test(a) && !/^[A-Za-z0-9_-]+$/.test(a)) return `disallowed systemctl arg: ${a}`;
+    // Verbs that mutate system state. The bare-name regex below also matches
+    // these (since they're plain identifiers), so we must reject them
+    // explicitly. Without this, e.g. `systemctl start nginx.service` slips
+    // through because `start` matches /^[A-Za-z0-9_-]+$/ as if it were a
+    // unit name.
+    const denyVerbs = new Set([
+      'start', 'stop', 'restart', 'reload', 'try-restart', 'reload-or-restart',
+      'enable', 'disable', 'mask', 'unmask', 'preset', 'preset-all',
+      'reenable', 'link', 'revert', 'edit', 'set-property',
+      'kill', 'clean', 'freeze', 'thaw', 'reset-failed',
+      'daemon-reload', 'daemon-reexec',
+      'isolate', 'set-default', 'switch-root', 'exit',
+      'reboot', 'poweroff', 'halt', 'kexec', 'suspend', 'hibernate', 'hybrid-sleep', 'suspend-then-hibernate',
+      'emergency', 'rescue', 'default', 'cancel',
+    ]);
+    for (const a of args) {
+      if (denyVerbs.has(a)) return `disallowed systemctl arg: ${a}`;
+      if (!allowed.has(a) && !/^[A-Za-z0-9@._:+-]+\.(service|target|socket|timer|mount|path|scope|slice)$/.test(a) && !/^[A-Za-z0-9_-]+$/.test(a)) return `disallowed systemctl arg: ${a}`;
+    }
     return null;
   },
   ps: (args) => {

@@ -15,6 +15,16 @@ describe('BASH_ARG_POLICIES', () => {
       assert.match(policy(['status', 'nginx;rm -rf /'])!, /disallowed systemctl arg/);
       assert.match(policy(['status', '$(id)'])!, /disallowed systemctl arg/);
     });
+    it('rejects mutating verbs that previously slipped through the bare-name regex', () => {
+      // Regression: the bare-name fallback `/^[A-Za-z0-9_-]+$/` was intended
+      // for unit names like `sshd`, but it also matches plain verbs like
+      // `start`/`stop`/`restart`/`reboot`/`poweroff`. Those must be rejected
+      // because the harness's bash handler is supposed to be read-only.
+      for (const verb of ['start', 'stop', 'restart', 'reload', 'enable', 'disable', 'mask', 'unmask', 'reboot', 'poweroff', 'halt', 'kill', 'daemon-reload', 'isolate']) {
+        assert.match(policy([verb, 'nginx.service'])!, /disallowed systemctl arg/, `verb ${verb} with unit should be rejected`);
+        assert.match(policy([verb])!, /disallowed systemctl arg/, `verb ${verb} alone should be rejected`);
+      }
+    });
   });
 
   describe('df', () => {
