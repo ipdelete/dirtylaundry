@@ -45,7 +45,11 @@ export const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null
     return null;
   },
   ps: (args) => {
-    for (const a of args) if (!/^[A-Za-z0-9,=_-]+$/.test(a)) return `disallowed ps arg: ${a}`;
+    // ps format specs commonly include `%` (e.g. `%cpu`, `%mem`) and trailing
+    // `+`/`-` sort markers (e.g. `cputime+`). Without these characters the
+    // canonical `ps -A -o pid=,comm=,%cpu=,rss=` invocation is rejected and
+    // no caller can rank processes by CPU/memory.
+    for (const a of args) if (!/^[A-Za-z0-9%,=+_-]+$/.test(a)) return `disallowed ps arg: ${a}`;
     return null;
   },
   ss: (args) => {

@@ -27,6 +27,23 @@ describe('BASH_ARG_POLICIES', () => {
     });
   });
 
+  describe('ps', () => {
+    const policy = BASH_ARG_POLICIES.ps;
+    it('allows the canonical format-spec invocation with %cpu/%mem', () => {
+      // Regression: the previous regex omitted `%`, so the standard
+      // `ps -A -o pid=,comm=,%cpu=,rss=` (and any ranking by CPU/mem) was
+      // impossible.
+      assert.equal(policy(['-A', '-o', 'pid=,comm=,%cpu=,rss=']), null);
+      assert.equal(policy(['-eo', 'pid,%cpu,%mem,comm']), null);
+      assert.equal(policy(['-o', 'cputime+']), null);
+    });
+    it('rejects shell metacharacters', () => {
+      assert.match(policy(['; rm -rf /'])!, /disallowed ps arg/);
+      assert.match(policy(['$(id)'])!, /disallowed ps arg/);
+      assert.match(policy(['pid|comm'])!, /disallowed ps arg/);
+    });
+  });
+
   describe('df', () => {
     const policy = BASH_ARG_POLICIES.df;
     it('allows absolute paths and simple flags', () => {
