@@ -86,6 +86,43 @@ the human whether to continue. If you truly cannot produce a candidate, say so
 and do not commit; the harness logs that as a no-finding attempt and stops only
 after the configured no-finding budget is exhausted.
 
+## Proof-of-bug protocol (mandatory)
+
+Before you write a single line of fix code, you must prove the bug exists on
+the current `HEAD` (the parent the harness will use). Skipping this step is the
+single biggest cause of wasted attempts.
+
+1. Write the smallest possible failing test or one-liner that demonstrates the
+   suspected wrong behavior.
+2. Run it against the **unmodified** repo (no fix applied yet) and confirm it
+   **fails** with the wrong-behavior signal you predicted. Capture the actual
+   error.
+3. If it passes, the behavior is already correct — stop, do not commit, pick a
+   different surface.
+4. Only then write the fix and re-run the test to confirm it now passes.
+
+The harness's `parent_repro` task replays this exact check. If your repro
+passes on the parent commit, the harness will discard the attempt with
+`failed at: parent repro fails`, meaning “you wrote a fix for behavior that
+was already correct.” Don't be that attempt.
+
+### Known false-positive shapes in this repo
+
+These are bugs prior agents have "found" that don't exist. Do not re-propose
+them unless you can produce a baseline repro that genuinely fails:
+
+- `df` arg policy and `..` traversal in absolute paths. The current policy
+  intentionally allows any arg starting with `/`; if you think this is a
+  security gap, that is a design decision, not a bug. `cd ../etc` and similar
+  are blocked elsewhere; `df /var/log/../etc/passwd` is not in scope.
+- `systemctl` arg policy accepting verbs like `start`/`stop`/`restart`. The
+  policy already rejects everything except a small allowlist of read-only
+  flags and bare unit-name identifiers; mutating verbs are already blocked.
+  Run the repro on baseline before claiming otherwise.
+- `if`-node `cond.task` pointing at a top-level control node (`if`/`foreach`).
+  `validateGraphSpec` already returns an error for this case; the existing
+  tests in `tests/schema.test.ts` cover it.
+
 ## What counts as an attempt
 
 One attempt is exactly one verified-bugfix candidate:
