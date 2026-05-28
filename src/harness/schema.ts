@@ -199,6 +199,7 @@ export function validateGraphSpec(spec: GraphSpec): { ok: true } | { ok: false; 
   }
 
   const topIds = new Set(spec.nodes.map((n) => n.id));
+  const topNodeById = new Map(spec.nodes.map((n) => [n.id, n] as const));
   for (const node of spec.nodes) {
     for (const dep of node.after ?? []) {
       if (!topIds.has(dep)) {
@@ -206,11 +207,24 @@ export function validateGraphSpec(spec: GraphSpec): { ok: true } | { ok: false; 
       }
       if (dep === node.id) return { ok: false, error: `node ${node.id} depends on itself` };
     }
-    if (node.type === 'if' && !topIds.has(node.cond.task)) {
-      return {
-        ok: false,
-        error: `if node ${node.id} condition references unknown top-level id: ${node.cond.task}`,
-      };
+    if (node.type === 'if') {
+      const target = topNodeById.get(node.cond.task);
+      if (!target) {
+        return {
+          ok: false,
+          error: `if node ${node.id} condition references unknown top-level id: ${node.cond.task}`,
+        };
+      }
+      if (target.type === 'if' || target.type === 'foreach') {
+        // Control nodes never produce observations; evalCondition would
+        // therefore always return false and the `then` branch would be dead
+        // code. Reject this at validation time instead of letting the runner
+        // silently take the else branch.
+        return {
+          ok: false,
+          error: `if node ${node.id} condition references control node ${node.cond.task} (${target.type}); cond.task must be a leaf`,
+        };
+      }
     }
   }
 

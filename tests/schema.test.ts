@@ -62,4 +62,52 @@ describe('validateGraphSpec', () => {
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error, /duplicate node id: dup/);
   });
+
+  it('rejects an if whose cond.task references a top-level control node (foreach)', () => {
+    // Regression: validateGraphSpec previously only checked that cond.task
+    // existed in topIds. It accepted an if pointing at a top-level foreach
+    // (or another if), even though control nodes never produce observations.
+    // At runtime evalCondition would always return false and the `then`
+    // branch would silently become dead code.
+    const foreachNode = {
+      id: 'loop',
+      type: 'foreach' as const,
+      as: 'x',
+      over: { kind: 'literal' as const, items: ['a'] },
+      body: bash('kid'),
+    };
+    const ifNode = {
+      id: 'branch',
+      type: 'if' as const,
+      cond: { kind: 'task_status' as const, task: 'loop', equals: 'succeeded' as const },
+      then: [bash('ok')],
+    };
+    const result = validateGraphSpec(spec([
+      foreachNode as unknown as GraphSpec['nodes'][number],
+      ifNode as unknown as GraphSpec['nodes'][number],
+    ]));
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /control node loop \(foreach\); cond\.task must be a leaf/);
+  });
+
+  it('rejects an if whose cond.task references another top-level if', () => {
+    const innerIf = {
+      id: 'gate1',
+      type: 'if' as const,
+      cond: { kind: 'task_status' as const, task: 'gate1', equals: 'succeeded' as const },
+      then: [bash('a')],
+    };
+    const outerIf = {
+      id: 'gate2',
+      type: 'if' as const,
+      cond: { kind: 'task_status' as const, task: 'gate1', equals: 'succeeded' as const },
+      then: [bash('b')],
+    };
+    const result = validateGraphSpec(spec([
+      innerIf as unknown as GraphSpec['nodes'][number],
+      outerIf as unknown as GraphSpec['nodes'][number],
+    ]));
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /control node gate1 \(if\); cond\.task must be a leaf/);
+  });
 });
