@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
 
 import type { GraphSpec } from './schema.js';
 import type { HostCapabilities } from './capabilities.js';
@@ -169,6 +170,16 @@ export class RunsReader {
   private readonly hasOurTables: boolean;
 
   constructor(path: string) {
+    // The read-side is also used by `dirtylaundry runs ...` on hosts that
+    // have never actually executed a run. node:sqlite throws "unable to open
+    // database file" when opening a non-existent path read-only, so fall
+    // back to an empty in-memory db; downstream queries gate on
+    // `hasOurTables` and degrade to "(no runs recorded yet)".
+    if (!existsSync(path)) {
+      this.db = new DatabaseSync(':memory:', { readOnly: false });
+      this.hasOurTables = false;
+      return;
+    }
     this.db = new DatabaseSync(path, { readOnly: true });
     this.hasOurTables = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('runs','plans')`).all().length === 2;
   }
