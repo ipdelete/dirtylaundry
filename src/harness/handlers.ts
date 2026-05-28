@@ -20,7 +20,7 @@ export interface HandlerResult {
   returncode: number;
 }
 
-const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
+export const BASH_ARG_POLICIES: Record<string, (args: string[]) => string | null> = {
   systemctl: (args) => {
     const allowed = new Set(['--failed', '--no-pager', 'status', 'list-units', 'list-unit-files', 'is-active', 'is-enabled', 'show']);
     for (const a of args) if (!allowed.has(a) && !/^[A-Za-z0-9@._:+-]+\.(service|target|socket|timer|mount|path|scope|slice)$/.test(a) && !/^[A-Za-z0-9_-]+$/.test(a)) return `disallowed systemctl arg: ${a}`;

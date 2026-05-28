@@ -128,7 +128,7 @@ function resolveRun(reader: RunsReader, idOrPrefix: string): RunRow | null {
   );
 }
 
-function uniqueByPrefix<T extends { id: string }>(matches: readonly T[], kind: string, idOrPrefix: string): T | null {
+export function uniqueByPrefix<T extends { id: string }>(matches: readonly T[], kind: string, idOrPrefix: string): T | null {
   if (matches.length === 0) {
     console.error(`no ${kind} matches ${idOrPrefix}`);
     return null;

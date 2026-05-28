@@ -187,12 +187,12 @@ interface DynamicLeaf {
   after: string[] | undefined;
 }
 
-function withId(leaf: LeafNode, newId: string): LeafNode {
+export function withId(leaf: LeafNode, newId: string): LeafNode {
   return { ...leaf, id: newId } as LeafNode;
 }
 
 /** Walk a leaf's payload strings and substitute `${as}` with `item`. */
-function substituteLeaf(leaf: LeafNode, as: string, item: string, newId: string): LeafNode {
+export function substituteLeaf(leaf: LeafNode, as: string, item: string, newId: string): LeafNode {
   const token = '${' + as + '}';
   const sub = (s: string): string => s.split(token).join(item);
   const subAny = (v: unknown): unknown => {
