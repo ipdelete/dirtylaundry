@@ -1,104 +1,139 @@
 ---
 provider: github-copilot
-model: claude-opus-4.7
+model: gpt-5.5
+thinking: medium
+mode: bugfix
 gate: |
   set -e
-  pnpm run typecheck
-  pnpm run harness:smoke
-metric: |
-  set -e
-  # Non-blank, non-comment source lines under SOURCE_DIRS. Lower is better.
-  # Excludes LLM-emitted code under src/generated/.
-  export SOURCE_DIRS="src"
-  export EXCLUDE_DIRS="src/generated"
-  python3 - <<'PY'
-  import os, pathlib
-  dirs = [pathlib.Path(p) for p in os.environ.get("SOURCE_DIRS", "src").split()]
-  excludes = [pathlib.Path(p).resolve() for p in os.environ.get("EXCLUDE_DIRS", "").split()]
-  suffixes = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs"}
-  comment_prefixes = ("#", "//")
-  def excluded(p):
-      rp = p.resolve()
-      return any(ex in rp.parents or ex == rp for ex in excludes)
-  n = 0
-  for root in dirs:
-      if not root.exists():
-          continue
-      for path in root.rglob("*"):
-          if path.suffix not in suffixes or not path.is_file():
-              continue
-          if excluded(path):
-              continue
-          for line in path.read_text(errors="ignore").splitlines():
-              s = line.strip()
-              if s and not s.startswith(comment_prefixes):
-                  n += 1
-  print(f"metric: {n}")
-  PY
-baseline_description: initial baseline (source SLOC)
+  # TODO: Replace with your repo's full correctness gate.
+  # Python/uv:
+  #   uv run pytest -q
+  #   uv run ruff check .
+  #   uv run ty check
+  # Node:
+  #   npm test
+  #   npm run lint
+  echo "TODO: edit program.md and set a real gate command" >&2
+  exit 1
+baseline_description: initial baseline (0 verified defect retirements)
 ---
 
-# Code simplifier
+# Bug finder
 
-You are making small, behavior-preserving simplifications. The harness runs
-`gate` and `metric` from the front matter after each committed attempt. Your
-job is only to propose one focused commit at a time.
+You are a QA tester on an autonomous loop. Your job is to discover one real
+latent defect at a time, add a regression test, fix the bug, and commit exactly
+one test+fix commit. The harness will prove whether the attempt counts.
 
-Before the first run, the human should review this file and customize:
+Before running, the human should edit the front-matter `gate` to the repo's
+normal full correctness gate. Initialize a repo-local bug-finder program with:
 
-- `gate` so it proves the repo still works.
-- `SOURCE_DIRS` in `metric` so it measures the code you want to simplify.
-- Any repo-specific rules below.
+```bash
+autotester init --program bug-finder
+```
 
-## Goal
+## Metric
 
-Lower the metric while keeping the gate green. Prefer changes that reduce
-code size and cognitive load without changing public behavior.
+The harness supplies the metric in `mode: bugfix`:
 
-## Good attempts
+```text
+metric = - verified_regression_fixes
+```
 
-- Merge branches or exception handlers that do the same thing.
-- Inline one-shot helpers that obscure more than they clarify.
-- Remove dead private parameters, locals, or internal helper functions.
-- Replace bespoke loops with comprehensions or standard-library helpers.
-- Collapse repeated setup/teardown into a smaller shared helper.
-- Simplify conditionals when the new form is clearly equivalent.
-- Collapse duplicated bootstrap/glue across `src/cli.ts`, `src/runs-cli.ts`,
-  and `src/harness-smoke.ts` into shared helpers in `src/harness/`.
-- Simplify internal handler/observation plumbing in `src/harness/handlers.ts`
-  and `src/harness/observe.ts` when behavior is identical.
+Lower is better. `-3` means this run has found, tested, and fixed three
+previously unknown defects while keeping the repo green.
+
+## How to search
+
+Think like a QA tester. Learn public usage from README, docs, examples,
+existing tests, public APIs, CLI help, and error messages. Identify the system's
+core domain objects and lifecycle operations, then use them in unexpected but
+plausible ways.
+
+Probe cases like:
+
+- empty inputs and missing optional fields
+- malformed inputs and invalid state transitions
+- duplicate IDs/names/keys
+- deeply nested or complex structures
+- cycles, disconnected graphs, dependency ordering problems
+- persistence round trips, load/save/import/export
+- cancellation, interruption, retries, repeated calls, idempotence
+- serialization/deserialization boundaries
+- unicode, paths, environment variables, platform edges
+- concurrency or race-like behavior when applicable
+
+Keep searching until the harness stops you. If a hypothesis is speculative or
+not reproducible, abandon it internally and try another subsystem. Do not ask
+the human whether to continue. If you truly cannot produce a candidate, say so
+and do not commit; the harness logs that as a no-finding attempt and stops only
+after the configured no-finding budget is exhausted.
+
+## What counts as an attempt
+
+One attempt is exactly one verified-bugfix candidate:
+
+1. Find one real bug.
+2. Write an inline `repro_command` that fails before the fix and passes after.
+3. Add a committed regression test.
+4. Fix the bug minimally.
+5. Commit exactly one commit containing only the declared test and fix files.
+6. In your final assistant response, return a JSON manifest for the harness.
+7. Stop so the harness can validate.
+
+The harness validates in temp worktrees:
+
+- parent repro fails
+- child repro passes
+- targeted regression test passes
+- full gate passes
+
+If the proof and targeted test pass but the full gate fails because of lint,
+formatting, import ordering, or similar gate fallout, the harness may give you
+one repair turn. On that turn, fix only the gate issue in the declared files and
+`git commit --amend --no-edit`; do not create a second commit.
+
+## Attempt manifest
+
+After committing, include exactly one JSON object like the example below in your
+final assistant response. Do not write `.autotester/attempt.json`; the harness
+reads this manifest from your persisted assistant output.
+
+```json
+{
+  "description": "Fix empty input crash in parser",
+  "repro_command": "python - <<'PY'\nfrom package import parse\nassert parse('') == []\nPY",
+  "test_command": "pytest tests/test_parser.py::test_empty_input -q",
+  "test_files": ["tests/test_parser.py"],
+  "fix_files": ["src/package/parser.py"],
+  "parent_failure_pattern": "AssertionError|ValueError"
+}
+```
+
+Required fields:
+
+- `description`: short one-line summary.
+- `repro_command`: inline command that fails on the parent commit and passes on
+  the child commit.
+- `test_command`: command targeting the committed regression test.
+- `test_files`: every test file changed/added by the commit.
+- `fix_files`: every implementation/config file changed by the fix.
+
+Optional:
+
+- `parent_failure_pattern`: regex matched against parent repro stdout+stderr to
+  prove the parent failed for the claimed reason.
 
 ## Avoid
 
-- Public API changes: names, signatures, return types, exceptions, CLI flags,
-  file formats, database schemas, wire formats.
-- Test rewrites to make a change pass.
-- Formatting-only churn, import sorting, quote-style churn.
-- Broad architectural rewrites.
-- Comment/docstring deletion unless the text is obsolete after a simplification.
-- Clever golfed code that is smaller but harder to maintain.
-- Editing anything under `src/generated/` (regenerated by `agent:create:*`).
-- Changing the `GraphSpec` zod schema in `src/harness/schema.ts` — it is the
-  wire format the planner LLM is prompted against.
-- Changing the sqlite store schema in `src/harness/store.ts` or the
-  `.autotester/` / `results.tsv` contract.
-- Changing the CLI surface of `src/cli.ts` / `src/runs-cli.ts`: flags
-  (`--max-turns`, `--interactive`, `--no-store`), stdin handling, default
-  goal, or the `dirtylaundry` bin entry in `package.json`.
-- Changing the auth lookup order or env vars (`COPILOT_GITHUB_TOKEN`,
-  `./auth.json`, `~/.pi/agent/auth.json`) or the model id string passed to
-  `getModel('github-copilot', ...)`.
+- Speculative bug reports without a repro.
+- Committing a failing test without a fix.
+- Fixing multiple bugs in one attempt.
+- Broad rewrites or opportunistic cleanup.
+- Treating missing docs, style disagreements, or subjective API taste as bugs.
+- Changing behavior unless the previous behavior is clearly wrong by docs,
+  tests, invariants, error messages, or obvious safety expectations.
+- Editing `program.md`, `results.tsv`, `.autotester/**`, or other harness
+  control files.
 
-## Attempt protocol
-
-For each attempt:
-
-1. Inspect enough code to identify one safe simplification.
-2. Edit only the files needed for that simplification.
-3. Write `.autotester/attempt.json` with a short description, for example:
-   `{"description":"Collapsed duplicate error-handling branches in parser"}`.
-4. Commit the change.
-5. Stop. Do not run the gate, metric, or edit `results.tsv`; the harness does
-   that and will tell you whether the commit was kept.
-
-If only risky or subjective changes remain, say so and do not commit.
+If you cannot produce a concrete reproduction and fix, keep probing; do not
+commit. If you truly cannot produce any candidate, say so and do not commit.
