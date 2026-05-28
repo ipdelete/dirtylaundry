@@ -4,6 +4,7 @@ model: claude-opus-4.7
 gate: |
   set -e
   pnpm run typecheck
+  pnpm test
   pnpm run harness:smoke
 metric: |
   set -e
