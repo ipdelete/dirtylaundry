@@ -28,7 +28,22 @@ function authPathCandidates(): string[] {
 
 function readAuth(path: string): AuthMap | undefined {
   if (!existsSync(path)) return undefined;
-  return JSON.parse(readFileSync(path, 'utf8')) as AuthMap;
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as AuthMap;
+  } catch (err) {
+    // A malformed candidate (typo, half-written file, foreign blob) must not
+    // crash the whole auth resolver. Surface it on stderr and let the caller
+    // fall through to the next candidate / return undefined cleanly so
+    // `requireGitHubCopilotApiKey()` can produce its real error message.
+    console.error(`warning: ignoring unparseable auth file ${path}: ${(err as Error).message}`);
+    return undefined;
+  }
 }
 
 /**
